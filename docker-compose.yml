@@ -68,6 +68,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APP_REVISION: ${APP_REVISION:-unknown}
     network_mode: host
     env_file: .env
     command: ['sh','-c','alembic -c backend/alembic.ini upgrade head && uvicorn backend.app.main:app --host 127.0.0.1 --port 18000 --workers 1']
@@ -87,6 +89,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        APP_REVISION: ${APP_REVISION:-unknown}
     network_mode: host
     environment:
       HOSTNAME: ${APP_BIND_IP}

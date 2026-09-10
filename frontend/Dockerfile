@@ -12,5 +12,7 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 USER node
+ARG APP_REVISION=unknown
+LABEL org.opencontainers.image.revision=$APP_REVISION
 EXPOSE 3000
 CMD ["node","server.js"]

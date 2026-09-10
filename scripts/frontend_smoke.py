@@ -17,8 +17,12 @@ results['login']=request('/api/session','POST',{'password':values['AIOPS_ADMIN_P
 results['authenticated_history']=request('/api/operator/incidents')[0]
 results['cross_origin_rejected']=request('/api/operator/incidents','POST',{'title':'must not be created'},'https://attacker.invalid')[0]
 results['arbitrary_proxy_path_rejected']=request('/api/operator/anything')[0]
+results['logout']=request('/api/session','DELETE',origin=base)[0]
+results['after_logout']=request('/api/operator/incidents')[0]
+assert results['logout']==200 and results['after_logout']==401
+assert request('/api/session','POST',{'password':values['AIOPS_ADMIN_PASSWORD']},base)[0]==200
 results['health_status'],health=request('/api/operator/health')
 results['component_statuses']={k:v['status'] for k,v in health.get('components',{}).items()}
 assert results['unauthenticated_proxy']==401 and results['wrong_password']==401 and results['login']==200
 assert results['authenticated_history']==200 and results['cross_origin_rejected']==403 and results['arbitrary_proxy_path_rejected']==404
-Path('reports').mkdir(exist_ok=True);Path('reports/frontend-smoke.json').write_text(json.dumps(results,indent=2));print(json.dumps(results,indent=2))
+Path('reports/private').mkdir(parents=True,exist_ok=True);Path('reports/private/frontend-smoke.json').write_text(json.dumps(results,indent=2));print(json.dumps(results,indent=2))

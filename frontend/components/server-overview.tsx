@@ -26,7 +26,7 @@ function text(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value) : "Unavailable";
 }
 function Badge({ value }: { value: string }) {
-  const style = /healthy|running|active|^up/i.test(value) ? "RESOLVED" : /critical|failed|exited|unhealthy/i.test(value) ? "FAILED" : "OPEN";
+  const style = /critical|failed|exited|unhealthy|inactive|dead/i.test(value) ? "FAILED" : /^(healthy|running|active|up)$/i.test(value) ? "RESOLVED" : "OPEN";
   return <span className={`pill ${style}`}>{value}</span>;
 }
 export function ServerOverview({ data, busy, refresh, investigate }: { data: OverviewData | null; busy: boolean; refresh: () => void; investigate: () => void }) {

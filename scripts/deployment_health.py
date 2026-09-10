@@ -45,6 +45,10 @@ def main():
     with urllib.request.urlopen(request, timeout=10) as response:
         assert len(json.load(response)['tools']) >= 19
     assert subprocess.run(['systemctl', 'is-active', '--quiet', 'aiops-gateway']).returncode == 0
+    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    for container in ('aiops-backend-1', 'aiops-frontend-1'):
+        deployed = subprocess.check_output(['docker', 'inspect', '--format', '{{index .Config.Labels "org.opencontainers.image.revision"}}', container], text=True).strip()
+        assert deployed == revision, f'{container} image does not match the checked-out commit'
     result = {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'components': {k: v['status'] for k, v in health['components'].items()}, 'frontend': 'ok', 'gateway_authenticated_registry': 'ok', 'production': state}
     Path('reports/private').mkdir(parents=True, exist_ok=True)
     Path('reports/private/deployment-health.json').write_text(json.dumps(result, indent=2))

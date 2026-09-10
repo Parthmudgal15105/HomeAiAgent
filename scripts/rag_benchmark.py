@@ -8,6 +8,7 @@ async def main():
     rag=LocalRAG(Settings())
     ingestion=await rag.ingest_runbooks()
     cases=[('CodeDuel website unavailable','codeduel-unavailable.md'),('CodeDuel submissions stuck in queue','codeduel-submissions-stuck.md'),('Redis server unavailable connection refused','redis-unavailable.md'),('MongoDB Atlas database unavailable','mongodb-unavailable.md'),('Docker daemon down cannot connect socket','docker-daemon-down.md'),('Cloudflare tunnel unavailable 502','cloudflare-tunnel-unavailable.md'),('Tailscale unavailable cannot connect','tailscale-unavailable.md'),('Disk full no space left','disk-full.md'),('High memory usage OOM','high-memory-usage.md'),('Host network disconnected WiFi down','network-disconnected.md'),('Worker failure BullMQ jobs not processed','worker-failure.md')]
+    cases.extend([('Generic application unavailable','application-unavailable.md'),('Application HTTP 502 bad gateway','application-http-502.md'),('Docker container crashed exited restart loop','docker-container-crashed.md')])
     results=[]
     for query,source in cases:
         docs=await rag.retrieve(query)

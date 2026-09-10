@@ -15,6 +15,7 @@ python3 scripts/deployment_health.py --production-only > reports/private/product
 git pull --ff-only origin main
 [[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] || { echo 'HEAD differs from origin/main'; exit 1; }
 python3 scripts/secret_scan.py --tracked
+export APP_REVISION=$(git rev-parse HEAD)
 bash scripts/backup.sh
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build backend frontend
 # Installer updates only the dedicated gateway, preserving its replay ledger.
