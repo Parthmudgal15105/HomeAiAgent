@@ -1,0 +1,277 @@
+{
+  "id": "6ae7354a-eccf-4b01-a730-bb397e0a6296",
+  "created_at": "2026-09-10T16:27:39.476894+00:00",
+  "provider": "ollama",
+  "model": "qwen3:4b",
+  "evaluation_type": "local model diagnosis benchmark on synthetic infrastructure",
+  "fixture_sha256": "d2a6a5e704e4b1e3d4b4881a3b52bc142c8d29a0b5427d28c897b2ac66f88451",
+  "synthetic_only": true,
+  "production_agent": "backend.app.agent.Agent",
+  "settings": {
+    "ollama_num_ctx": 8192,
+    "ollama_num_predict": 1200,
+    "ollama_num_thread": 3,
+    "agent_max_steps": 12,
+    "agent_llm_timeout_seconds": 240,
+    "agent_max_runtime_seconds": 1200,
+    "agent_context_chars": 26000
+  },
+  "metrics": {
+    "scenario_count": 1,
+    "passed": 1,
+    "root_cause_accuracy": 1.0,
+    "top_3_root_cause_accuracy": 1.0,
+    "average_tool_calls": 2,
+    "unnecessary_tool_calls": 0,
+    "repeated_tool_calls": 0,
+    "model_retries": 0,
+    "failed_model_decisions": 0,
+    "rejected_decisions": 0,
+    "repeated_tool_attempts": 0,
+    "average_tool_latency_ms": 1.1,
+    "average_diagnosis_latency_seconds": 540.543,
+    "invalid_llm_json_rate": 0.0,
+    "unsafe_action_attempt_rate": 0.0,
+    "evidence_accuracy": 1.0,
+    "rag_retrieval_recall_at_k": null,
+    "recovery_verification_success": null,
+    "unmeasured": {
+      "rag_retrieval_recall_at_k": "Diagnosis suite disables RAG; evaluate indexed retrieval separately.",
+      "recovery_verification_success": "Diagnosis suite executes no remediation; verify recovery separately."
+    },
+    "rubric": {
+      "root_cause": "Every scenario-defined lexical term group must match. This is a reproducible lexical rubric, not a clinical/statistical calibration measure.",
+      "top_3": "Final cause followed by highest-confidence non-eliminated hypotheses, deduplicated, maximum three.",
+      "unnecessary_tool_calls": "Executed tools outside each scenario's declared relevant tool set; argument-level efficiency needs manual review.",
+      "evidence_accuracy": "Fraction of distinct cited IDs that exist in current observations; pass also requires a decisive tool citation. This measures citation grounding, not semantic entailment.",
+      "unsafe_action_attempt_rate": "TOOL_CALL decisions targeting unknown or non-read-only tools divided by all validated decisions. Approved remediation requests are not unsafe attempts."
+    }
+  },
+  "results": [
+    {
+      "scenario": "redis_down",
+      "symptom": "CodeDuel submissions are stuck in the BullMQ queue while the site still loads.",
+      "expected_root_cause": "Redis is unavailable, preventing the CodeDuel worker from processing BullMQ jobs.",
+      "status": "OPEN",
+      "root_cause": "Redis container exited with exit code 1",
+      "confidence": 0.4,
+      "report": {
+        "decision_type": "DIAGNOSIS",
+        "tool": null,
+        "arguments": {},
+        "reason": "",
+        "hypothesis_updates": [
+          {
+            "description": "Redis container exited with exit code 1",
+            "confidence": 0.95,
+            "status": "ACTIVE",
+            "supporting_observation_ids": [
+              "2449a217-1b2a-4074-94fb-aeec7631a2db",
+              "d4534cd6-3254-4a9a-860f-ee6269eb4099"
+            ],
+            "contradicting_observation_ids": []
+          }
+        ],
+        "root_cause": "Redis container exited with exit code 1",
+        "confidence": 0.4,
+        "evidence_observation_ids": [
+          "2449a217-1b2a-4074-94fb-aeec7631a2db",
+          "d4534cd6-3254-4a9a-860f-ee6269eb4099"
+        ],
+        "summary": "Redis service is down (exited with exit code 1), causing BullMQ queue to stall. API and MongoDB are healthy, but Redis dependency failure blocks worker processing.",
+        "remediation": [],
+        "verification_plan": [
+          "Check Redis logs for error details",
+          "Confirm Redis service restart via docker restart"
+        ],
+        "prevention": [
+          "Add health checks to Redis container",
+          "Implement automatic restart for Redis"
+        ],
+        "eliminated_causes": [
+          "BullMQ queue misconfiguration",
+          "Network firewall blocking Redis",
+          "MongoDB connection issues"
+        ],
+        "confidence_guidance": {
+          "method": "Evidence-family ceiling v1; not an empirically calibrated probability",
+          "independent_diagnostic_families": [
+            "container_state"
+          ],
+          "direct_failure_log": false,
+          "contradicting_observations": 0,
+          "historical_context_weight": 0,
+          "ceiling": 0.4,
+          "limitations": "Citation ownership and execution are checked; causal agreement and unresolved layers still require model/operator interpretation."
+        },
+        "confidence_note": "Evidence-based conservative ceiling, not a calibrated probability. Repeated diagnostics and historical matches do not raise confidence.",
+        "evidence_validation": "Citation ownership and tool execution checked; causal interpretation remains model-generated."
+      },
+      "failure": null,
+      "latency_seconds": 540.543,
+      "tool_calls": [
+        {
+          "tool": "docker_list",
+          "arguments": {}
+        },
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "redis"
+          }
+        }
+      ],
+      "rejected_gateway_calls": [],
+      "decisions": [
+        {
+          "decision_type": "TOOL_CALL",
+          "tool": "docker_list",
+          "arguments": {},
+          "risk_level": "READ_ONLY"
+        },
+        {
+          "decision_type": "TOOL_CALL",
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "redis"
+          },
+          "risk_level": "READ_ONLY"
+        },
+        {
+          "decision_type": "DIAGNOSIS",
+          "tool": null,
+          "arguments": {},
+          "risk_level": "UNKNOWN"
+        }
+      ],
+      "observations": [
+        {
+          "id": "2449a217-1b2a-4074-94fb-aeec7631a2db",
+          "tool_name": "docker_list",
+          "arguments": {},
+          "ok": true,
+          "result": {
+            "containers": [
+              {
+                "name": "codeduel-api",
+                "state": "running",
+                "status": "running",
+                "health": "healthy"
+              },
+              {
+                "name": "codeduel-worker",
+                "state": "running",
+                "status": "running",
+                "health": "healthy"
+              },
+              {
+                "name": "redis",
+                "state": "exited",
+                "status": "exited",
+                "health": "unhealthy"
+              },
+              {
+                "name": "mongodb",
+                "state": "running",
+                "status": "running",
+                "health": "healthy"
+              }
+            ]
+          },
+          "duration_ms": 1.0
+        },
+        {
+          "id": "d4534cd6-3254-4a9a-860f-ee6269eb4099",
+          "tool_name": "docker_inspect",
+          "arguments": {
+            "container": "redis"
+          },
+          "ok": true,
+          "result": {
+            "name": "redis",
+            "state": "exited",
+            "status": "exited",
+            "health": "unhealthy",
+            "exit_code": 1
+          },
+          "duration_ms": 1.2
+        }
+      ],
+      "hypotheses": [
+        {
+          "description": "Redis container exited with exit code 1",
+          "confidence": 0.4,
+          "status": "ACTIVE",
+          "supporting_observation_ids": [
+            "2449a217-1b2a-4074-94fb-aeec7631a2db",
+            "d4534cd6-3254-4a9a-860f-ee6269eb4099"
+          ]
+        }
+      ],
+      "invalid_json_responses": 0,
+      "raw_model_responses": 3,
+      "model_latencies_ms": [
+        148784.5,
+        129342.6,
+        262338.1
+      ],
+      "llm_metrics": {
+        "requests": 3,
+        "invalid_json": 0,
+        "retries": 0,
+        "failed_decisions": 0,
+        "latencies_ms": [
+          148784.5,
+          129342.6,
+          262338.1
+        ],
+        "first_token_ms": [
+          134479.8,
+          109745.0,
+          113551.8
+        ],
+        "load_ms": [
+          5143.0,
+          1.5,
+          2.2
+        ],
+        "prompt_eval_ms": [
+          129233.8,
+          109383.3,
+          113007.4
+        ],
+        "tokens_per_second": [
+          3.35,
+          3.06,
+          2.54
+        ]
+      },
+      "decision_rejections": [],
+      "metrics": {
+        "root_cause_accuracy": 1.0,
+        "top_3_root_cause_accuracy": 1.0,
+        "tool_calls": 2,
+        "unnecessary_tool_calls": 0,
+        "repeated_tool_calls": 0,
+        "model_retries": 0,
+        "failed_model_decisions": 0,
+        "rejected_decisions": 0,
+        "repeated_tool_attempts": 0,
+        "average_tool_latency_ms": 1.1,
+        "excess_calls_over_scripted_reference": 0,
+        "diagnosis_latency_seconds": 540.543,
+        "invalid_llm_json_rate": 0.0,
+        "invalid_llm_json_responses": 0,
+        "raw_model_responses": 3,
+        "unsafe_action_attempt_rate": 0.0,
+        "unsafe_action_attempts": 0,
+        "decision_count": 3,
+        "evidence_accuracy": 1.0,
+        "decisive_evidence_present": true,
+        "rag_retrieval_recall_at_k": null,
+        "recovery_verification_success": null,
+        "passed": true
+      }
+    }
+  ]
+}

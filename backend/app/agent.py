@@ -58,10 +58,13 @@ class Agent:
             hypotheses = [{k: v for k, v in asdict(h).items() if k not in ('created_at', 'updated_at', 'incident_id')} for h in incident.hypotheses]
             context = {
                 'incident': {'id': incident.id, 'title': incident.title, 'description': incident.description, 'service': incident.service},
-                'observations': observations, 'hypotheses': hypotheses,
+                # Stable tool/topology prefix lets Ollama reuse its prompt cache.
+                # Putting growing observations first re-evaluated every schema on
+                # every CPU step, even though the permitted tools never changed.
                 'tools': list(registry.values()), 'topology': self.settings.topology(),
                 'retrieved_incidents': incident.agent_state.get('retrieved_incidents', []),
                 'retrieved_runbooks': incident.agent_state.get('retrieved_runbooks', []),
+                'observations': observations, 'hypotheses': hypotheses,
                 'validation_feedback': feedback,
                 'remaining_steps': incident.agent_state.get('remaining_steps'),
             }

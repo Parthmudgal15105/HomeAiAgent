@@ -13,6 +13,10 @@ environment_hash=$(sha256sum .env | cut -d' ' -f1)
 mkdir -p reports/private
 python3 scripts/deployment_health.py --production-only > reports/private/production-before.json
 git pull --ff-only origin main
+if [[ $previous_commit != $(git rev-parse HEAD) ]]; then
+  # Run the fetched script from its beginning rather than continue stale logic.
+  exec bash scripts/deploy.sh
+fi
 [[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] || { echo 'HEAD differs from origin/main'; exit 1; }
 python3 scripts/secret_scan.py --tracked
 export APP_REVISION=$(git rev-parse HEAD)
