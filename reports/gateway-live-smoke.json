@@ -1,0 +1,118 @@
+{
+  "read_only_smoke": [
+    {
+      "tool": "dns_lookup",
+      "ok": true,
+      "duration_ms": 387,
+      "error": null
+    },
+    {
+      "tool": "ping_host",
+      "ok": true,
+      "duration_ms": 275,
+      "error": null
+    },
+    {
+      "tool": "http_check",
+      "ok": true,
+      "duration_ms": 1413,
+      "error": null
+    },
+    {
+      "tool": "docker_list",
+      "ok": true,
+      "duration_ms": 181,
+      "error": null
+    },
+    {
+      "tool": "docker_inspect",
+      "ok": true,
+      "duration_ms": 16,
+      "error": null
+    },
+    {
+      "tool": "docker_logs",
+      "ok": true,
+      "duration_ms": 17,
+      "error": null
+    },
+    {
+      "tool": "service_status",
+      "ok": true,
+      "duration_ms": 9,
+      "error": null
+    },
+    {
+      "tool": "journal_logs",
+      "ok": true,
+      "duration_ms": 577,
+      "error": null
+    },
+    {
+      "tool": "network_interfaces",
+      "ok": true,
+      "duration_ms": 4,
+      "error": null
+    },
+    {
+      "tool": "route_table",
+      "ok": true,
+      "duration_ms": 10,
+      "error": null
+    },
+    {
+      "tool": "memory_usage",
+      "ok": true,
+      "duration_ms": 1,
+      "error": null
+    },
+    {
+      "tool": "disk_usage",
+      "ok": true,
+      "duration_ms": 0,
+      "error": null
+    },
+    {
+      "tool": "system_uptime",
+      "ok": true,
+      "duration_ms": 1,
+      "error": null
+    },
+    {
+      "tool": "process_list",
+      "ok": true,
+      "duration_ms": 130,
+      "error": null
+    },
+    {
+      "tool": "port_check",
+      "ok": true,
+      "duration_ms": 0,
+      "error": null
+    },
+    {
+      "tool": "tailscale_status",
+      "ok": true,
+      "duration_ms": 38,
+      "error": null
+    },
+    {
+      "tool": "cloudflared_status",
+      "ok": true,
+      "duration_ms": 16,
+      "error": null
+    },
+    {
+      "tool": "docker_stats",
+      "ok": true,
+      "duration_ms": 2076,
+      "error": null
+    },
+    {
+      "tool": "recent_docker_events",
+      "ok": true,
+      "duration_ms": 22,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+name: aiops
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+x-app: &app
+  restart: unless-stopped
+  init: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *logging
+services:
+  ollama:
+    <<: *app
+    image: ollama/ollama:0.33.3
+    user: '1000:1000'
+    environment:
+      HOME: /home/ollama
+      OLLAMA_MODELS: /models
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NO_CLOUD: '1'
+    ports: ['127.0.0.1:11434:11434']
+    volumes: ['./data/ollama:/models']
+    tmpfs: ['/home/ollama:uid=1000,gid=1000,mode=700']
+    mem_limit: 7g
+    cpus: 3.0
+    healthcheck:
+      test: ['CMD','ollama','list']
+      interval: 30s
+      timeout: 10s
+      retries: 4
+  postgres:
+    <<: *app
+    image: postgres:17-alpine
+    cap_add: [CHOWN, SETUID, SETGID, FOWNER, DAC_OVERRIDE]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: ['127.0.0.1:15432:5432']
+    volumes: ['postgres_data:/var/lib/postgresql/data']
+    mem_limit: 512m
+    healthcheck:
+      test: ['CMD-SHELL','pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 10s
+      timeout: 5s
+      retries: 8
+  qdrant:
+    <<: *app
+    image: qdrant/qdrant:v1.17.0
+    environment:
+      QDRANT__STORAGE__SNAPSHOTS_PATH: /qdrant/storage/snapshots
+      QDRANT__TELEMETRY_DISABLED: 'true'
+    healthcheck:
+      test: ['CMD','bash','-c', 'exec 3<>/dev/tcp/127.0.0.1/6333; printf "GET /readyz HTTP/1.0\r\n\r\n" >&3; read -r line <&3; [[ "$$line" == *" 200 "* ]]']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    user: '1000:1000'
+    ports: ['127.0.0.1:16333:6333']
+    volumes: ['./data/qdrant:/qdrant/storage']
+    mem_limit: 384m
+  backend:
+    <<: *app
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    network_mode: host
+    env_file: .env
+    command: ['sh','-c','alembic -c backend/alembic.ini upgrade head && uvicorn backend.app.main:app --host 127.0.0.1 --port 18000 --workers 1']
+    volumes: ['./config:/app/config:ro','./runbooks:/app/runbooks:ro','./scripts:/app/scripts:ro']
+    depends_on:
+      postgres: {condition: service_healthy}
+      ollama: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    mem_limit: 640m
+    healthcheck:
+      test: ['CMD','python','-c',"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18000/health',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+  frontend:
+    <<: *app
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    network_mode: host
+    environment:
+      HOSTNAME: ${APP_BIND_IP}
+      PORT: 3080
+      BACKEND_URL: http://127.0.0.1:18000
+      AIOPS_API_TOKEN: ${AIOPS_API_TOKEN}
+      AIOPS_ADMIN_PASSWORD: ${AIOPS_ADMIN_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      APP_ORIGIN: ${APP_ORIGIN}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    mem_limit: 384m
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ['CMD','node','-e',"fetch('http://'+process.env.HOSTNAME+':3080/api/session').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+  demo:
+    <<: *app
+    profiles: [demo]
+    image: python:3.12-slim
+    container_name: aiops-demo
+    user: '65534:65534'
+    read_only: true
+    command: ['python','-m','http.server','8080','--directory','/tmp']
+    tmpfs: ['/tmp:size=1m,mode=1777']
+    mem_limit: 96m
+    cpus: 0.5
+    healthcheck:
+      test: ['CMD','python','-c',"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080',timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+volumes:
+  postgres_data:

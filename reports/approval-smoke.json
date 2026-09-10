@@ -1,0 +1,118 @@
+{
+  "id": "eba44873-4b99-4ce0-8da6-d25122e65efa",
+  "created_at": "2026-09-09T07:37:48.964872+00:00",
+  "test_type": "live isolated persisted approval, gateway enforcement, recovery and local RAG integration",
+  "diagnosis_source": "deterministic diagnosis citing a live stopped-container observation; not an LLM diagnosis benchmark",
+  "container": "aiops-demo",
+  "passed": true,
+  "phase": "complete",
+  "service": "demo",
+  "initial_state": {
+    "running": false,
+    "status": "created"
+  },
+  "unsigned_gateway_status": 403,
+  "unsigned_gateway_rejected": true,
+  "incident_id": "6dc29710-7112-4615-b7b0-673957c1b123",
+  "action_id": "3b06a7ae-7194-485d-b671-3fc971e80ded",
+  "evidence_observation_id": "6c7de97a-cfe3-4a04-80ac-624880eadd09",
+  "pending": {
+    "incident_status": "WAITING_FOR_APPROVAL",
+    "phase": "DIAGNOSED",
+    "approval_status": "PENDING",
+    "executed_at": null,
+    "verification_status": "NOT_RUN",
+    "action_ok": null,
+    "observation_count": 1,
+    "verification": [],
+    "indexed_for_history": false
+  },
+  "after_approval": {
+    "incident_status": "OPEN",
+    "phase": "VERIFICATION_FAILED",
+    "approval_status": "APPROVED",
+    "executed_at": "2026-09-09T07:37:49.522834+00:00",
+    "verification_status": "FAILED",
+    "action_ok": true,
+    "observation_count": 3,
+    "verification": [
+      {
+        "tool": "docker_inspect",
+        "arguments": {
+          "container": "aiops-demo"
+        },
+        "expect": {
+          "state.running": true,
+          "health": "healthy"
+        },
+        "passed": false,
+        "observation_id": "ea3369d0-5d31-40b0-9ebc-8b3ebfe66175"
+      },
+      {
+        "tool": "http_check",
+        "arguments": {
+          "url": "aiops-demo-health"
+        },
+        "expect": {
+          "reachable": true,
+          "status_code": 200
+        },
+        "passed": true,
+        "observation_id": "ee19bcdd-08fe-4be5-b668-343a641edfbc"
+      }
+    ],
+    "indexed_for_history": false
+  },
+  "final": {
+    "incident_status": "RESOLVED",
+    "phase": "RESOLVED",
+    "approval_status": "APPROVED",
+    "executed_at": "2026-09-09T07:37:49.522834+00:00",
+    "verification_status": "PASSED",
+    "action_ok": true,
+    "observation_count": 8,
+    "verification": [
+      {
+        "tool": "docker_inspect",
+        "arguments": {
+          "container": "aiops-demo"
+        },
+        "expect": {
+          "state.running": true,
+          "health": "healthy"
+        },
+        "passed": true,
+        "observation_id": "9680d659-94bd-4ebf-af55-5464485c71c7"
+      },
+      {
+        "tool": "http_check",
+        "arguments": {
+          "url": "aiops-demo-health"
+        },
+        "expect": {
+          "reachable": true,
+          "status_code": 200
+        },
+        "passed": true,
+        "observation_id": "da9593cd-b1df-437a-aa9b-d7d52a07b6b7"
+      }
+    ],
+    "indexed_for_history": true
+  },
+  "backend_replay_rejected": true,
+  "gateway_replay_status": 403,
+  "gateway_replay_rejected": true,
+  "rag": {
+    "indexed_for_history": true,
+    "persisted_point_verified": true,
+    "collection": "homeai_knowledge_a51ea6ac",
+    "point_id": "0aace84d-f4f4-5812-8808-1b76a9c21635",
+    "retrieval_completed": true,
+    "retrieved_count": 1,
+    "incident_in_top_k": true,
+    "matching_scores": [
+      0.6920415
+    ]
+  },
+  "elapsed_seconds": 8.864
+}

@@ -1,0 +1,435 @@
+{
+  "host": "hp",
+  "discovered_at": "2026-09-09T07:00:00Z",
+  "services": {
+    "codeduel": {
+      "description": "Public CodeDuel frontend/API served through existing Cloudflare Tunnel. Homepage alone does not verify API or submissions.",
+      "depends_on": [
+        "cloudflare",
+        "codeduel-proxy",
+        "codeduel-api",
+        "codeduel-worker",
+        "codeduel-frontend"
+      ],
+      "health_checks": [
+        {
+          "tool": "http_check",
+          "arguments": {
+            "url": "https://codeduel.online"
+          },
+          "expect": {
+            "reachable": true,
+            "status_code": 200
+          }
+        },
+        {
+          "tool": "http_check",
+          "arguments": {
+            "url": "https://codeduel.online/api/explore/problems"
+          },
+          "expect": {
+            "reachable": true,
+            "status_code": 200
+          }
+        }
+      ],
+      "name": "CodeDuel",
+      "type": "web_application",
+      "tags": [
+        "application",
+        "public",
+        "submissions"
+      ],
+      "containers": [],
+      "systemd_services": [],
+      "public_urls": [
+        "https://codeduel.online",
+        "https://codeduel.online/api/explore/problems"
+      ],
+      "local_health_urls": [],
+      "overview": true
+    },
+    "codeduel-proxy": {
+      "description": "NGINX codeduel-proxy-1; localhost8085. /healthz tests proxy only.",
+      "depends_on": [
+        "docker"
+      ],
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "codeduel-proxy-1"
+          },
+          "expect": {
+            "state.running": true,
+            "health": "healthy"
+          }
+        }
+      ],
+      "name": "Codeduel Proxy",
+      "type": "service",
+      "tags": [],
+      "containers": [
+        "codeduel-proxy-1"
+      ],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "codeduel-api": {
+      "description": "codeduel-api-1 internal port5000; authenticated application routes; readiness /health/ready reports dependencies.",
+      "depends_on": [
+        "redis",
+        "mongodb-atlas",
+        "docker"
+      ],
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "codeduel-api-1"
+          },
+          "expect": {
+            "state.running": true,
+            "health": "healthy"
+          }
+        },
+        {
+          "tool": "http_check",
+          "arguments": {
+            "url": "codeduel-api-ready"
+          },
+          "expect": {
+            "reachable": true,
+            "status_code": 200
+          }
+        }
+      ],
+      "name": "Codeduel Api",
+      "type": "service",
+      "tags": [],
+      "containers": [
+        "codeduel-api-1"
+      ],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": [
+        "codeduel-api-ready"
+      ]
+    },
+    "codeduel-worker": {
+      "description": "codeduel-worker-1 BullMQ worker uses Redis, Atlas and rootless judge Docker /run/user/1001/docker.sock.",
+      "depends_on": [
+        "redis",
+        "mongodb-atlas",
+        "docker"
+      ],
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "codeduel-worker-1"
+          },
+          "expect": {
+            "state.running": true,
+            "health": "healthy"
+          }
+        }
+      ],
+      "name": "Codeduel Worker",
+      "type": "service",
+      "tags": [],
+      "containers": [
+        "codeduel-worker-1"
+      ],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "codeduel-frontend": {
+      "description": "codeduel-frontend-1 serves static frontend on internal8080; works even when API fails.",
+      "depends_on": [
+        "docker"
+      ],
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "codeduel-frontend-1"
+          },
+          "expect": {
+            "state.running": true,
+            "health": "healthy"
+          }
+        }
+      ],
+      "name": "Codeduel Frontend",
+      "type": "service",
+      "tags": [],
+      "containers": [
+        "codeduel-frontend-1"
+      ],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "redis": {
+      "description": "codeduel-redis-1 password-protected Redis7.4, private codeduel_backend:6379. Native container health tests authenticated PING.",
+      "depends_on": [
+        "docker"
+      ],
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "codeduel-redis-1"
+          },
+          "expect": {
+            "state.running": true,
+            "health": "healthy"
+          }
+        }
+      ],
+      "name": "Redis",
+      "type": "queue",
+      "tags": [
+        "redis",
+        "queue",
+        "dependency"
+      ],
+      "containers": [
+        "codeduel-redis-1"
+      ],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "mongodb-atlas": {
+      "description": "External Atlas cluster0.etfzpvb.mongodb.net; no local MongoDB container. Verify through API /health/ready database check. Do not restart a nonexistent mongodb service. Connection errors alone do not establish IP allowlist failure.",
+      "depends_on": [],
+      "health_checks": [
+        {
+          "tool": "http_check",
+          "arguments": {
+            "url": "codeduel-api-ready"
+          },
+          "expect": {
+            "reachable": true,
+            "status_code": 200
+          }
+        }
+      ],
+      "name": "Mongodb Atlas",
+      "type": "database",
+      "tags": [
+        "database",
+        "external"
+      ],
+      "containers": [],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": [
+        "codeduel-api-ready"
+      ]
+    },
+    "cloudflare": {
+      "description": "Existing remote-managed cloudflared.service routes codeduel.online and www.codeduel.online to http://localhost:8085; no local ingress file.",
+      "depends_on": [
+        "host"
+      ],
+      "health_checks": [
+        {
+          "tool": "service_status",
+          "arguments": {
+            "service": "cloudflared"
+          },
+          "expect": {
+            "state": "active"
+          }
+        }
+      ],
+      "name": "Cloudflare",
+      "type": "tunnel",
+      "tags": [
+        "cloudflare",
+        "tunnel"
+      ],
+      "containers": [],
+      "systemd_services": [
+        "cloudflared"
+      ],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "docker": {
+      "description": "Host Docker daemon for application containers, separate from rootless CodeDuel judge daemon.",
+      "depends_on": [
+        "host"
+      ],
+      "health_checks": [
+        {
+          "tool": "service_status",
+          "arguments": {
+            "service": "docker"
+          },
+          "expect": {
+            "state": "active"
+          }
+        }
+      ],
+      "name": "Docker",
+      "type": "container_runtime",
+      "tags": [
+        "docker",
+        "containers"
+      ],
+      "containers": [],
+      "systemd_services": [
+        "docker"
+      ],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "host": {
+      "description": "Ubuntu26.04 hp, i5-8250U, 16GB RAM, wlo1 and tailscale0. Resource/network checks diagnose but are insufficient alone to certify service recovery. Generic host symptoms require symptom-specific verification; automatic resolution is disabled for the generic host profile.",
+      "depends_on": [],
+      "health_checks": [],
+      "name": "Home server",
+      "type": "host",
+      "tags": [
+        "host",
+        "server",
+        "resources",
+        "network"
+      ],
+      "containers": [],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "tailscale": {
+      "description": "tailscaled.service; server100.98.193.60 private admin access. Do not restart remotely from agent.",
+      "depends_on": [
+        "host"
+      ],
+      "health_checks": [
+        {
+          "tool": "service_status",
+          "arguments": {
+            "service": "tailscaled"
+          },
+          "expect": {
+            "state": "active"
+          }
+        }
+      ],
+      "name": "Tailscale",
+      "type": "network",
+      "tags": [
+        "tailscale",
+        "network"
+      ],
+      "containers": [],
+      "systemd_services": [
+        "tailscaled"
+      ],
+      "public_urls": [],
+      "local_health_urls": []
+    },
+    "demo": {
+      "description": "Isolated AI operator demo HTTP container. Not a production application. Used only for approval/recovery acceptance tests.",
+      "depends_on": [],
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "aiops-demo"
+          },
+          "expect": {
+            "state.running": true,
+            "health": "healthy"
+          }
+        },
+        {
+          "tool": "http_check",
+          "arguments": {
+            "url": "aiops-demo-health"
+          },
+          "expect": {
+            "reachable": true,
+            "status_code": 200
+          }
+        }
+      ],
+      "name": "Demo",
+      "type": "test_application",
+      "tags": [
+        "demo",
+        "test"
+      ],
+      "containers": [
+        "aiops-demo"
+      ],
+      "systemd_services": [],
+      "public_urls": [],
+      "local_health_urls": [
+        "aiops-demo-health"
+      ]
+    },
+    "nextcloud": {
+      "name": "Nextcloud",
+      "type": "application",
+      "description": "Existing Nextcloud workload. Container process state is checked; application functionality requires a separately configured endpoint check.",
+      "tags": [
+        "application",
+        "container"
+      ],
+      "containers": [
+        "nextcloud"
+      ],
+      "depends_on": [
+        "docker"
+      ],
+      "overview": true,
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "nextcloud"
+          },
+          "expect": {
+            "state.running": true
+          }
+        }
+      ]
+    },
+    "jellyfin": {
+      "name": "Jellyfin",
+      "type": "application",
+      "description": "Existing Jellyfin workload. Container process state is checked; application functionality requires a separately configured endpoint check.",
+      "tags": [
+        "application",
+        "container"
+      ],
+      "containers": [
+        "jellyfin"
+      ],
+      "depends_on": [
+        "docker"
+      ],
+      "overview": true,
+      "health_checks": [
+        {
+          "tool": "docker_inspect",
+          "arguments": {
+            "container": "jellyfin"
+          },
+          "expect": {
+            "state.running": true
+          }
+        }
+      ]
+    }
+  },
+  "baseline_notice": "API and worker had MongoDB Atlas server-selection errors at initial discovery; both recovered and became healthy around07:19UTC without this project changing them. Historical logs must not be treated as proof of a current outage."
+}

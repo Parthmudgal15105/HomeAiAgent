@@ -1,0 +1,12 @@
+.git
+.env
+.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/.pytest_cache
+reports
+**/._*
+.pnpm-store
+backups
+.local-access.txt

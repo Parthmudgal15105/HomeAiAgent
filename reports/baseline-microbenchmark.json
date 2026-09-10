@@ -1,0 +1,200 @@
+{
+  "hardware": "i5-8250U CPU, 16GB RAM, Ollama container limit3 CPUs/7GB",
+  "benchmark": "4 structured single-step tool-choice cases per model; not full incident root-cause accuracy",
+  "results": [
+    {
+      "model": "qwen2.5:3b",
+      "cases": [
+        {
+          "expected": "docker_list",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "service_status",
+            "arguments": {
+              "service": "local_api"
+            },
+            "reason": "To diagnose the refusal of connection to the local API, checking its status is necessary."
+          },
+          "valid_json": true,
+          "correct_tool": false,
+          "latency_seconds": 13.45,
+          "load_seconds": 3.9,
+          "tokens_per_second": 9.42
+        },
+        {
+          "expected": "docker_logs",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "docker_logs",
+            "arguments": {
+              "container": "codeduel-api-1",
+              "lines": 10
+            },
+            "reason": "To diagnose the exit of the container, it's useful to first inspect the logs of the exited container."
+          },
+          "valid_json": true,
+          "correct_tool": true,
+          "latency_seconds": 9.88,
+          "load_seconds": 0.0,
+          "tokens_per_second": 8.99
+        },
+        {
+          "expected": "disk_usage",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "disk_usage",
+            "arguments": {
+              "path": "/"
+            },
+            "reason": "Need to check filesystem capacity to identify the cause of 'Writes fail no space left on device'."
+          },
+          "valid_json": true,
+          "correct_tool": true,
+          "latency_seconds": 9.29,
+          "load_seconds": 0.0,
+          "tokens_per_second": 8.24
+        },
+        {
+          "expected": "network_interfaces",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "service_status",
+            "arguments": {
+              "service": "networking"
+            },
+            "reason": "First, check the status of the networking service to determine if it is running and in a normal state, which can help identify why the server cannot reach the gateway or internet."
+          },
+          "valid_json": true,
+          "correct_tool": false,
+          "latency_seconds": 11.79,
+          "load_seconds": 0.0,
+          "tokens_per_second": 8.28
+        }
+      ],
+      "mean_latency_seconds": 11.1025,
+      "json_validity": 1.0,
+      "tool_selection_accuracy": 0.5,
+      "loaded_model_metadata": {
+        "models": [
+          {
+            "name": "qwen2.5:3b",
+            "model": "qwen2.5:3b",
+            "size": 2164156005,
+            "digest": "357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "qwen2",
+              "families": [
+                "qwen2"
+              ],
+              "parameter_size": "3.1B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-09-09T19:55:04.189942862Z",
+            "size_vram": 0,
+            "context_length": 4096
+          }
+        ]
+      },
+      "container_memory_stats": "{\"BlockIO\":\"118MB / 5.9GB\",\"CPUPerc\":\"79.13%\",\"Container\":\"aiops-ollama-1\",\"ID\":\"4023a432a91c\",\"MemPerc\":\"32.44%\",\"MemUsage\":\"2.271GiB / 7GiB\",\"Name\":\"aiops-ollama-1\",\"NetIO\":\"6.09GB / 160MB\",\"PIDs\":\"29\"}\n"
+    },
+    {
+      "model": "qwen3:4b",
+      "cases": [
+        {
+          "expected": "docker_list",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "docker_list",
+            "arguments": {
+              "include_all": true
+            },
+            "reason": "To identify running containers that might be causing the 502 error, we need to list all Docker containers. This will help us find the container that's handling the API requests and potentially the one causing the connection refusal."
+          },
+          "valid_json": true,
+          "correct_tool": true,
+          "latency_seconds": 24.38,
+          "load_seconds": 4.83,
+          "tokens_per_second": 6.29
+        },
+        {
+          "expected": "docker_logs",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "docker_logs",
+            "arguments": {
+              "container": "codeduel-api-1",
+              "lines": 50
+            },
+            "reason": "The container exited, so checking logs is the most direct way to find why it exited. Logs provide error messages or failure reasons. Using 50 lines ensures enough context without overwhelming."
+          },
+          "valid_json": true,
+          "correct_tool": true,
+          "latency_seconds": 17.58,
+          "load_seconds": 0.0,
+          "tokens_per_second": 6.31
+        },
+        {
+          "expected": "disk_usage",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "disk_usage",
+            "arguments": {
+              "/": "Check root filesystem"
+            },
+            "reason": "The error indicates no space left on device. The most direct tool to check filesystem capacity is disk_usage with the root path (/) to identify disk space usage."
+          },
+          "valid_json": true,
+          "correct_tool": true,
+          "latency_seconds": 14.74,
+          "load_seconds": 0.0,
+          "tokens_per_second": 6.18
+        },
+        {
+          "expected": "network_interfaces",
+          "decision": {
+            "decision_type": "TOOL_CALL",
+            "tool": "network_interfaces",
+            "arguments": {
+              "path": "/proc/net/dev"
+            },
+            "reason": "To check the network interface state, the network_interfaces tool is the most direct method. This will provide information about active interfaces, their status, and connectivity."
+          },
+          "valid_json": true,
+          "correct_tool": true,
+          "latency_seconds": 14.67,
+          "load_seconds": 0.0,
+          "tokens_per_second": 6.24
+        }
+      ],
+      "mean_latency_seconds": 17.8425,
+      "json_validity": 1.0,
+      "tool_selection_accuracy": 1.0,
+      "loaded_model_metadata": {
+        "models": [
+          {
+            "name": "qwen3:4b",
+            "model": "qwen3:4b",
+            "size": 3184001022,
+            "digest": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "qwen3",
+              "families": [
+                "qwen3"
+              ],
+              "parameter_size": "4.0B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-09-09T19:56:16.599359358Z",
+            "size_vram": 0,
+            "context_length": 4096
+          }
+        ]
+      },
+      "container_memory_stats": "{\"BlockIO\":\"118MB / 5.9GB\",\"CPUPerc\":\"67.36%\",\"Container\":\"aiops-ollama-1\",\"ID\":\"4023a432a91c\",\"MemPerc\":\"46.89%\",\"MemUsage\":\"3.283GiB / 7GiB\",\"Name\":\"aiops-ollama-1\",\"NetIO\":\"6.09GB / 160MB\",\"PIDs\":\"29\"}\n"
+    }
+  ]
+}

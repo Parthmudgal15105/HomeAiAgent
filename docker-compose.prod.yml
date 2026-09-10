@@ -1,0 +1,8 @@
+# Optional production override; base Compose is already resource-limited and private.
+services:
+  backend:
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+  frontend:
+    read_only: true
+    tmpfs: ['/tmp:size=32m,mode=1777']

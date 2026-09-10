@@ -1,0 +1,15 @@
+{
+  "unauthenticated_proxy": 401,
+  "wrong_password": 401,
+  "login": 200,
+  "authenticated_history": 200,
+  "cross_origin_rejected": 403,
+  "arbitrary_proxy_path_rejected": 404,
+  "health_status": 200,
+  "component_statuses": {
+    "gateway": "ok",
+    "ollama": "unavailable",
+    "qdrant": "ok",
+    "database": "ok"
+  }
+}

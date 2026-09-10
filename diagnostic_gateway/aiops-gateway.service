@@ -1,0 +1,36 @@
+[Unit]
+Description=AI Home Lab constrained diagnostic gateway
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aiops-gateway
+Group=aiops-gateway
+SupplementaryGroups=docker systemd-journal
+WorkingDirectory=/home/hp/ai-home-lab-operator
+EnvironmentFile=/home/hp/ai-home-lab-operator/.gateway.env
+ExecStart=/home/hp/ai-home-lab-operator/.venv-gateway/bin/uvicorn diagnostic_gateway.main:app --host 127.0.0.1 --port 8766 --workers 1 --limit-concurrency 12 --timeout-keep-alive 5
+Restart=on-failure
+RestartSec=3
+StateDirectory=aiops-gateway
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

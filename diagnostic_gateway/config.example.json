@@ -1,0 +1,23 @@
+{
+  "containers": [
+    "codeduel-api-1",
+    "codeduel-worker-1",
+    "codeduel-redis-1",
+    "codeduel-proxy-1",
+    "codeduel-frontend-1"
+  ],
+  "services": ["docker", "cloudflared", "tailscaled", "ssh"],
+  "hosts": ["codeduel.online", "cluster0.etfzpvb.mongodb.net", "localhost", "127.0.0.1"],
+  "http_urls": ["https://codeduel.online", "https://codeduel.online/", "http://127.0.0.1:8085", "http://127.0.0.1:8085/", "http://127.0.0.1:8085/api/health"],
+  "container_http": {
+    "codeduel-api-ready": {"container": "codeduel-api-1", "port": 5000, "path": "/health/ready"}
+  },
+  "tcp_targets": [{"host": "127.0.0.1", "port": 8085}],
+  "disk_paths": ["/", "/home/hp"],
+  "write_containers": [],
+  "write_services": [],
+  "writes_enabled": false,
+  "command_timeout_seconds": 8,
+  "max_output_bytes": 32768,
+  "state_path": "/var/lib/aiops-gateway/approvals.sqlite3"
+}

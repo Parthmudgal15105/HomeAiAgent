@@ -1,0 +1,148 @@
+{
+  "embedding_model": "all-minilm",
+  "ingestion": {
+    "chunks_indexed": 11,
+    "collection": "homeai_knowledge_a51ea6ac",
+    "embedding_model": "all-minilm"
+  },
+  "queries": 11,
+  "recall_at_k": 1.0,
+  "k": 4,
+  "score_threshold": 0.45,
+  "limitation": "Small authored title/symptom benchmark, not independent holdout retrieval evaluation.",
+  "results": [
+    {
+      "query": "CodeDuel website unavailable",
+      "expected": "codeduel-unavailable.md",
+      "retrieved": [
+        {
+          "source": "codeduel-unavailable.md",
+          "score": 0.5008505
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "CodeDuel submissions stuck in queue",
+      "expected": "codeduel-submissions-stuck.md",
+      "retrieved": [
+        {
+          "source": "codeduel-submissions-stuck.md",
+          "score": 0.47246793
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Redis server unavailable connection refused",
+      "expected": "redis-unavailable.md",
+      "retrieved": [
+        {
+          "source": "redis-unavailable.md",
+          "score": 0.62919736
+        },
+        {
+          "source": "codeduel-submissions-stuck.md",
+          "score": 0.50087905
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "MongoDB Atlas database unavailable",
+      "expected": "mongodb-unavailable.md",
+      "retrieved": [
+        {
+          "source": "mongodb-unavailable.md",
+          "score": 0.63635194
+        },
+        {
+          "source": "codeduel-unavailable.md",
+          "score": 0.47682136
+        },
+        {
+          "source": "worker-failure.md",
+          "score": 0.4609164
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Docker daemon down cannot connect socket",
+      "expected": "docker-daemon-down.md",
+      "retrieved": [
+        {
+          "source": "docker-daemon-down.md",
+          "score": 0.5739063
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Cloudflare tunnel unavailable 502",
+      "expected": "cloudflare-tunnel-unavailable.md",
+      "retrieved": [
+        {
+          "source": "cloudflare-tunnel-unavailable.md",
+          "score": 0.7184049
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Tailscale unavailable cannot connect",
+      "expected": "tailscale-unavailable.md",
+      "retrieved": [
+        {
+          "source": "tailscale-unavailable.md",
+          "score": 0.6599779
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Disk full no space left",
+      "expected": "disk-full.md",
+      "retrieved": [
+        {
+          "source": "disk-full.md",
+          "score": 0.47320372
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "High memory usage OOM",
+      "expected": "high-memory-usage.md",
+      "retrieved": [
+        {
+          "source": "high-memory-usage.md",
+          "score": 0.5388424
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Host network disconnected WiFi down",
+      "expected": "network-disconnected.md",
+      "retrieved": [
+        {
+          "source": "network-disconnected.md",
+          "score": 0.5489055
+        }
+      ],
+      "hit": true
+    },
+    {
+      "query": "Worker failure BullMQ jobs not processed",
+      "expected": "worker-failure.md",
+      "retrieved": [
+        {
+          "source": "worker-failure.md",
+          "score": 0.4920419
+        }
+      ],
+      "hit": true
+    }
+  ]
+}

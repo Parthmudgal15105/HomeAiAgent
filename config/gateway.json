@@ -1,0 +1,98 @@
+{
+  "containers": [
+    "codeduel-api-1",
+    "codeduel-worker-1",
+    "codeduel-redis-1",
+    "codeduel-proxy-1",
+    "codeduel-frontend-1",
+    "maigret",
+    "homepage",
+    "uptime-kuma",
+    "netdata",
+    "pihole",
+    "flaresolverr",
+    "qbittorrent",
+    "prowlarr",
+    "radarr",
+    "sonarr",
+    "jellyseerr",
+    "jellyfin",
+    "nextcloud",
+    "nextcloud-redis",
+    "nextcloud-db",
+    "filebrowser",
+    "portainer",
+    "aiops-demo"
+  ],
+  "services": [
+    "docker",
+    "cloudflared",
+    "tailscaled",
+    "ssh"
+  ],
+  "hosts": [
+    "codeduel.online",
+    "www.codeduel.online",
+    "cluster0.etfzpvb.mongodb.net",
+    "localhost",
+    "127.0.0.1",
+    "192.168.1.1",
+    "1.1.1.1",
+    "100.98.193.60"
+  ],
+  "http_urls": [
+    "https://codeduel.online",
+    "https://codeduel.online/",
+    "https://codeduel.online/api/explore/problems",
+    "http://127.0.0.1:8085",
+    "http://127.0.0.1:8085/",
+    "http://127.0.0.1:8085/api/explore/problems",
+    "http://127.0.0.1:8085/healthz"
+  ],
+  "container_http": {
+    "codeduel-api-ready": {
+      "container": "codeduel-api-1",
+      "port": 5000,
+      "path": "/health/ready",
+      "network": "codeduel_backend"
+    },
+    "codeduel-frontend": {
+      "container": "codeduel-frontend-1",
+      "port": 8080,
+      "path": "/",
+      "network": "codeduel_edge"
+    },
+    "aiops-demo-health": {
+      "container": "aiops-demo",
+      "port": 8080,
+      "path": "/",
+      "network": "aiops_default"
+    }
+  },
+  "tcp_targets": [
+    {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 22
+    },
+    {
+      "host": "100.98.193.60",
+      "port": 22
+    }
+  ],
+  "disk_paths": [
+    "/",
+    "/storage"
+  ],
+  "write_containers": [
+    "aiops-demo"
+  ],
+  "write_services": [],
+  "writes_enabled": true,
+  "command_timeout_seconds": 8,
+  "max_output_bytes": 16384,
+  "state_path": "/var/lib/aiops-gateway/approvals.sqlite3"
+}

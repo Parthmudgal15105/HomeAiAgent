@@ -1,0 +1,5 @@
+fastapi>=0.119,<1
+uvicorn>=0.35,<1
+pydantic>=2.12,<3
+psutil>=7.1,<8
+dnspython>=2.7,<3

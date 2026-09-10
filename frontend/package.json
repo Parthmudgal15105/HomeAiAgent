@@ -1,0 +1,24 @@
+{
+  "name": "ai-home-lab-operator",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3080",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0 --port 3000",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --outDir .test-build --noEmit false --module commonjs --moduleResolution node --esModuleInterop true --skipLibCheck true --target es2022 lib/session.ts lib/dashboard.ts app/api/session/route.ts \"app/api/operator/[...path]/route.ts\" && node --test tests/*.test.cjs"
+  },
+  "dependencies": {
+    "next": "^16.2.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "lucide-react": "^0.577.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
+}
