@@ -88,3 +88,7 @@ Code inspection confirms a real Ollama provider in production, a bounded agent l
 ## CPU inference finding — 10 September16:28UTC
 
 A real Qwen3 Redis investigation exposed expensive prompt reprocessing: one measured step spent109s evaluating1,455 prompt tokens and19.6s producing60 output tokens while deployment compilation also competed for CPU. The agent context previously placed changing observations before the static tool registry/topology, preventing reuse of that stable prefix. Reordered context to put unchanged tools/topology/history first and changing observations last. This preserves decision inputs and security validation; it is a performance change requiring a fresh measured run. Baseline investigation remains separately labeled. Avoid building images during final performance measurements.
+
+## Deployment permission correction — 10 September16:32UTC
+
+Live runbook ingestion caught a deployment issue: the initial Git conversion used umask077, creating newly tracked runbooks mode0600; the non-root backend could not read its mounted files. Added a deployment step granting read/traverse permissions only to tracked non-secret config/runbook/script mounts, and set the gateway installer's source/package umask022 while keeping its explicit secret files0600 and backups0700. Server `.env` remains untouched. The failure is an acceptance finding; retrieval success is not claimed until the corrected deployment is rechecked. Synthetic evaluations now write a progress checkpoint after every completed case so interrupted sessions retain measurable progress.

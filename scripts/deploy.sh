@@ -19,6 +19,19 @@ if [[ $previous_commit != $(git rev-parse HEAD) ]]; then
 fi
 [[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] || { echo 'HEAD differs from origin/main'; exit 1; }
 python3 scripts/secret_scan.py --tracked
+python3 - <<'PY'
+from pathlib import Path
+import subprocess
+# Git tracks executable bits, not read permissions. A private shell umask can
+# otherwise make these non-secret read-only mounts unreadable by container UIDs.
+for name in subprocess.check_output(['git','ls-files','-z','config','runbooks','scripts']).decode().split('\0'):
+    if not name:
+        continue
+    path = Path(name)
+    path.chmod(path.stat().st_mode | 0o444)
+    for parent in path.parents:
+        parent.chmod(parent.stat().st_mode | 0o555)
+PY
 export APP_REVISION=$(git rev-parse HEAD)
 bash scripts/backup.sh
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build backend frontend

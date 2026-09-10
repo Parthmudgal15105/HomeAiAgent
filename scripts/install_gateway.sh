@@ -3,6 +3,7 @@
 set -euo pipefail
 project=$(pwd)
 if [ "$(id -u)" != 0 ]; then echo 'Run with sudo from the project directory'; exit 1; fi
+umask 022
 if ! id aiops-gateway >/dev/null 2>&1; then useradd --system --home-dir /var/lib/aiops-gateway --shell /usr/sbin/nologin aiops-gateway; fi
 install -d -m 755 /opt/aiops-gateway /opt/aiops-gateway/config
 install -d -o aiops-gateway -g aiops-gateway -m 700 /var/lib/aiops-gateway

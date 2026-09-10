@@ -88,7 +88,7 @@ async def evaluate_scenario(scenario: Scenario, provider_name: str, settings: Se
     return record
 
 
-async def run_suite(provider_name: str = "scripted", scenario_ids: list[str] | None = None, settings: Settings | None = None) -> dict[str, Any]:
+async def run_suite(provider_name: str = "scripted", scenario_ids: list[str] | None = None, settings: Settings | None = None, progress_file: Path | None = None) -> dict[str, Any]:
     if provider_name not in {"scripted", "ollama"}:
         raise ValueError("Provider must be scripted or ollama")
     selected = [SCENARIOS_BY_ID[item] for item in scenario_ids] if scenario_ids else list(SCENARIOS)
@@ -101,6 +101,9 @@ async def run_suite(provider_name: str = "scripted", scenario_ids: list[str] | N
         for scenario in selected:
             result = await evaluate_scenario(scenario, provider_name, isolated)
             results.append(result)
+            if progress_file:
+                progress_file.parent.mkdir(parents=True, exist_ok=True)
+                progress_file.write_text(json.dumps({'complete': False, 'provider': provider_name, 'model': settings.ollama_model, 'completed_cases': len(results), 'planned_cases': len(selected), 'metrics': aggregate(results), 'results': results}, indent=2))
             print(json.dumps({"progress": scenario.id, "model": settings.ollama_model if provider_name == "ollama" else "scripted", "metrics": result["metrics"], "failure": result["failure"]}), flush=True)
     metrics = aggregate(results)
     if provider_name == "scripted":
@@ -158,8 +161,10 @@ def main() -> int:
         }.items() if value is not None
     }
     settings = Settings(**overrides)
-    report = asyncio.run(run_suite(args.provider, args.scenario, settings))
+    progress = args.output_dir / ('progress-' + args.provider + '-' + settings.ollama_model.replace(':', '-').replace('/', '-') + '.json')
+    report = asyncio.run(run_suite(args.provider, args.scenario, settings, progress))
     path = persist_report(report, args.output_dir, settings.database_url if args.persist_db else None)
+    progress.write_text(json.dumps({'complete': True, 'report_path': str(path), 'metrics': report['metrics']}, indent=2))
     print(json.dumps({"evaluation_type": report["evaluation_type"], "model": report["model"], "metrics": report["metrics"], "report_path": str(path.resolve())}, indent=2))
     return 0 if report["metrics"]["passed"] == report["metrics"]["scenario_count"] else 1
 
