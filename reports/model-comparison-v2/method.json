@@ -1,0 +1,23 @@
+{
+  "description": "Actual Ollama decisions through production Agent, synthetic gateway, RAG disabled. Two candidates run sequentially with the same fixtures, provider and limits. Completed finite diagnostic scopes are excluded by output grammar; executor remains authoritative. No fixed diagnostic order or authored diagnosis.",
+  "files_sha256": {
+    "backend/app/llm.py": "243e6f91b6b2d2b85b20e2a86357a413a6ac37d0cf9f81499b07187f7cac2203",
+    "backend/app/agent.py": "fb17a264af196cb23f3be9df5cd9f0e5256234182b3718cf8191aecc88165003",
+    "backend/app/context.py": "245eda2c98279042f88bca492aa4b2020f6241a5cc6aeaa32e2cfa727a283351",
+    "evals/scenarios.py": "d2a6a5e704e4b1e3d4b4881a3b52bc142c8d29a0b5427d28c897b2ac66f88451",
+    "evals/run.py": "1c98d717b8f26bcae3a429f75996708107c68f1f6d25b5e439a295742be21ac6"
+  },
+  "models": [
+    "qwen3:4b",
+    "qwen2.5:3b"
+  ],
+  "settings": {
+    "num_ctx": 8192,
+    "num_predict": 800,
+    "num_thread": 3,
+    "max_steps": 10,
+    "llm_timeout": 240,
+    "runtime_limit": 900
+  },
+  "production_unchanged_during_inference": true
+}

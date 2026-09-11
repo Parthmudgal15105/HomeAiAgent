@@ -35,6 +35,8 @@ def classify(signals: dict, application_checks: list[dict]) -> tuple[str, list[d
                     add('Warning', key, f"{item.get('name')}: {item.get('status', item.get('state'))}. Confirm whether this state is expected.")
             if result.get('missing_configured_containers'):
                 add('Warning', key, 'Some configured containers were not found.')
+            if result.get('truncated'):
+                add('Warning', key, 'Container inventory exceeded the output limit; unobserved containers have unknown status.')
         elif key.startswith('service_status_') or key == 'cloudflared_status':
             if result.get('state') != 'active':
                 add('Critical', key, f"Configured system service is {result.get('state', 'unknown')}.")

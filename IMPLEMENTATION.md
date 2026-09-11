@@ -1,6 +1,6 @@
 # Implementation status and resume guide
 
-Last verified: 11 September 2026, 15:24 UTC. **Overall status: incomplete — deployment works, but actual-model acceptance has not passed.**
+Last verified: 11 September 2026, 15:33 UTC. **Overall status: incomplete — deployment works, but actual-model acceptance has not passed.**
 
 ## Source and deployment identity
 
@@ -13,11 +13,11 @@ Last verified: 11 September 2026, 15:24 UTC. **Overall status: incomplete — de
 ## Verified current state
 
 - SSH reconnected today. All six platform containers and isolated demo are healthy. No unrelated production changes or reboot performed.
-- Fresh complete Python suite: **152 passed** (backend, gateway, agent, fixtures, mocked recovery approval guards and deployment scanner). Last frontend validation: **9 tests passed**, typecheck and production build passed.
+- Fresh complete Python suite: **155 passed** (backend, gateway, agent, fixtures, mocked recovery approval guards and deployment scanner). Last frontend validation: **9 tests passed**, typecheck and production build passed.
 - Previous deployed acceptance: gateway **19/19** live diagnostics; authentication/logout and private component checks passed; backend/frontend image provenance matched Git HEAD. GitHub CI passed for `7b8cbfb`.
 - Real local Ollama provider, typed constrained decisions, evidence persistence, evolving hypotheses, approval/replay protection, recovery verification, generic service topology, incident history and bounded server overview are implemented. Fourteen runbooks exist; final ingestion/retrieval recheck is pending.
 - **Completed actual qwen2.5:3b eight-case benchmark: 0/8 root-cause accuracy, Top-3 1/8, average 4.125 executed tools and 265.24 seconds per case.** All eight stopped after repeated diagnostic requests; 24 duplicate attempts were rejected. No invalid JSON or unsafe action attempts were recorded. This model is not accepted for production reasoning on these results.
-- Actual qwen3:4b comparison is running against the same eight fixtures/settings. Earlier standalone Redis success is a development result, not full-suite acceptance. See `reports/model-comparison/` for preserved measurements.
+- The original qwen3:4b comparison was stopped after its first case also failed on repeated requests; its partial report is retained. A revised provider now excludes completed finite diagnostic targets from the output grammar and requests a concise evidence assessment before choosing a decision. Its new eight-case Qwen3 benchmark is running; Qwen2.5 must be rerun with this same provider for fair comparison. Earlier standalone Redis success is a development result, not full-suite acceptance. See `reports/model-comparison/` for preserved measurements.
 - A real-model mocked Redis approval/recovery/PostgreSQL/RAG acceptance runner now exists in `evals/remediation.py`. Its two security tests pass; its actual-model lifecycle has not yet been run.
 
 ## Remaining acceptance work (resume here)
@@ -99,3 +99,12 @@ Live runbook ingestion caught a deployment issue: the initial Git conversion use
 - Tests: full Python suite152 passed; one dependency deprecation warning.
 - Deployment: server remains healthy on7b8cbfb; new changes not deployed yet.
 - Limitation: actual-model root-cause acceptance remains unfulfilled. Next action: finish Qwen3 measurements and live acceptance.
+
+## 11 September2026 — reliability and live inventory fixes
+
+- Files: `backend/app/llm.py`, `backend/tests/test_model_reliability.py`, `diagnostic_gateway/tools.py`, `diagnostic_gateway/tests/test_gateway.py`, `backend/app/overview.py`, `backend/tests/test_topology_overview.py`, evaluation/deployment docs.
+- Decision: preserve failed baselines, narrow completed diagnostic target choices without widening tool access or forcing a fixed diagnostic order, and require a short evidence assessment before decision selection. Raw current observations still determine model conclusions.
+- Live browser finding: Docker's full JSON rows included bulky labels and exhausted the capture budget; only seven of23 configured containers were shown. Project only necessary fields before capture, and classify truncated inventories as incomplete rather than claiming containers are missing.
+- Tests:154 Python tests passed before the inventory fix; inventory-specific gateway suite71 passed; full follow-up155 passed. Nine frontend tests, typecheck/build and published checkpoint CI passed. Browser sign-in, overview and historical incident reopening verified.
+- Deployment: new fixes remain on Mac while the actual-model comparison runs. Server remains on7b8cbfb. Fresh gateway19/19, auth/logout and private-port checks passed. CodeDuel API500/unhealthy with MongoDB TLS errors existed before this deployment cycle; other four CodeDuel containers healthy, no modifications performed.
+- Remaining: complete revised actual-model benchmarks, live model investigation, modeled mocked recovery/RAG, and exact final Git deployment.

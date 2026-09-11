@@ -32,6 +32,8 @@ def test_health_never_treats_missing_checks_as_healthy():
     assert classify({'disk_usage': envelope(used_percent=98)}, [])[0] == 'Critical'
     assert classify({'memory_usage': envelope(used_percent=81)}, [])[0] == 'Warning'
     assert classify({'memory_usage': envelope(used_percent=25)}, [])[0] == 'Healthy'
+    health, findings = classify({'docker_list': envelope(containers=[], truncated=True)}, [])
+    assert health == 'Warning' and 'unknown' in findings[0]['message']
 
 
 def test_application_failure_and_expected_stopped_container_are_distinct():

@@ -199,7 +199,10 @@ class DiagnosticTools:
         return http_probe(url)
 
     def docker_list(self) -> dict[str, Any]:
-        result = self.command(["docker", "container", "ls", "--all", "--no-trunc", "--format", "{{json .}}"])
+        # Exclude labels and executable arguments before capture. Compose labels
+        # can consume the output budget before all container rows are returned.
+        projection = '{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},"State":{{json .State}},"Status":{{json .Status}},"Ports":{{json .Ports}}}'
+        result = self.command(["docker", "container", "ls", "--all", "--no-trunc", "--format", projection])
         containers = []
         for line in result.stdout.splitlines():
             try:
@@ -211,7 +214,9 @@ class DiagnosticTools:
             if item.get("Names") in self.config.containers:
                 containers.append({"id": item.get("ID"), "name": item.get("Names"), "image": item.get("Image"), "state": item.get("State"), "status": item.get("Status"), "ports": item.get("Ports")})
         found = {item["name"] for item in containers}
-        return {"containers": containers, "missing_configured_containers": sorted(set(self.config.containers) - found), "truncated": result.truncated}
+        unobserved = sorted(set(self.config.containers) - found)
+        return {"containers": containers, "missing_configured_containers": [] if result.truncated else unobserved,
+                "unobserved_configured_containers": unobserved if result.truncated else [], "truncated": result.truncated}
 
     def docker_inspect(self, container: str) -> dict[str, Any]:
         self.require(container, self.config.containers, "Container")

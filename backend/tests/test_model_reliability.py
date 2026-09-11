@@ -11,6 +11,36 @@ from backend.app.safety import evidence_confidence, redact
 from conftest import REGISTRY
 
 
+def test_completed_snapshots_are_removed_without_expanding_targets_or_writes():
+    from copy import deepcopy
+    from backend.app.llm import remaining_parameters
+    registry = deepcopy(REGISTRY)
+    context = {'tools': list(registry.values()), 'observations': [
+        {'id': 'a', 'tool_name': 'docker_list', 'tool_arguments': {}},
+        {'id': 'b', 'tool_name': 'docker_inspect', 'tool_arguments': {'container': 'sandbox'}},
+    ]}
+    validator = Draft202012Validator(decision_schema(context))
+    call = {'reason': 'Another check', 'decision_type': 'TOOL_CALL', 'tool': 'docker_list', 'arguments': {}, 'hypothesis_updates': []}
+    assert not validator.is_valid(call)
+    assert not validator.is_valid({**call, 'tool': 'docker_inspect', 'arguments': {'container': 'sandbox'}})
+    assert not validator.is_valid({**call, 'tool': 'docker_inspect', 'arguments': {'container': 'production'}})
+    assert registry == REGISTRY
+    write = {'name': 'start_container', 'risk_level': 'LOW_RISK_WRITE', 'parameters': REGISTRY['docker_inspect']['parameters']}
+    assert remaining_parameters(write, [{'tool_name': 'start_container', 'arguments': {'container': 'sandbox'}}]) == write['parameters']
+
+
+def test_log_sampling_changes_do_not_reopen_a_completed_target():
+    from backend.app.llm import remaining_parameters
+    tool = {'name': 'docker_logs', 'risk_level': 'READ_ONLY', 'parameters': {
+        'type': 'object', 'properties': {'container': {'enum': ['api', 'queue']}, 'lines': {'type': 'integer', 'maximum': 100}},
+        'required': ['container'], 'additionalProperties': False}}
+    schema = remaining_parameters(tool, [{'tool_name': 'docker_logs', 'tool_arguments': {'container': 'api', 'lines': 10}}])
+    validator = Draft202012Validator(schema)
+    assert not validator.is_valid({'container': 'api', 'lines': 100})
+    assert validator.is_valid({'container': 'queue', 'lines': 100})
+    assert not validator.is_valid({'container': 'queue', 'lines': 101})
+
+
 def test_extract_only_one_complete_object():
     assert parse_decision('Result:\n{"decision_type":"STOP","reason":"No evidence"}\nEnd.').decision_type == 'STOP'
     for text in ('{"decision_type":"STOP"} {"decision_type":"TOOL_CALL","tool":"docker_list"}',

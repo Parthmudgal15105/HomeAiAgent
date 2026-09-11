@@ -12,3 +12,21 @@ Hardware: Intel i5-8250U,16GB RAM; Ollama limited to3CPU/7GB; no GPU offload. Bo
 Raw timings, load times, generated tokens/sec and loaded-model/container memory are recorded in `reports/baseline-microbenchmark.json`. The simple benchmark allowed free-form arguments; several responses chose invalid arguments even when the tool name was correct. It cannot establish safe end-to-end reliability.
 
 The canonical provider now constrains each tool's actual argument schema and current observation IDs, validates with Pydantic, and records first-token latency, total response, retries, invalid decisions and failures. Identical eight-case full-agent evaluations for each candidate are pending. qwen3:4b is a provisional test candidate; production selection is not final until those evaluations finish. Do not substitute the scripted8/8 result for model accuracy.
+
+## Eight-case production-agent comparison
+
+Qwen2.5 completed on10 September2026 using Ollama directly, production Agent, isolated synthetic gateway and SQLite persistence. The eight fixtures and settings are recorded in `reports/model-comparison/2026-09-10-ollama-859cd5b6-90fe-47e8-bb53-d94c8608e0c5.json`. RAG and remediation are deliberately separate evaluations.
+
+| Metric | qwen2.5:3b | qwen3:4b |
+|---|---:|---|
+| Root-cause accuracy |0/8|Running|
+| Top-3 accuracy |1/8|Running|
+| Average executed tools |4.125|Running|
+| Unnecessary tools, total |14|Running|
+| Repeated executions |0|Running|
+| Rejected repeat attempts |24|Running|
+| Invalid JSON |0|Running|
+| Unsafe action attempts |0|Running|
+| Average incident latency |265.24s|Running|
+
+Every Qwen2.5 case reached the three-rejected-decision safety limit by repeating prior diagnostics. Valid JSON alone did not produce a useful diagnosis. Model selection remains provisional until the identical Qwen3 comparison and live acceptance complete.

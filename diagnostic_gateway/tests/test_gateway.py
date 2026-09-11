@@ -44,6 +44,22 @@ def test_missing_auth_secret_fails_closed(config):
     assert client.get("/tools", headers=AUTH).status_code == 503
 
 
+def test_container_inventory_projects_safe_fields_and_does_not_infer_absence_from_truncation(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    commands = []
+    def command(argv):
+        commands.append(argv)
+        return CommandResult(json.dumps({'Names': 'aiops-demo', 'State': 'running'}) + '\n{', '', 0, True)
+    monkeypatch.setattr(tools, 'command', command)
+    result = tools.docker_list()
+    assert result['missing_configured_containers'] == []
+    assert result['unobserved_configured_containers'] == ['codeduel-api-1']
+    assert result['truncated'] is True
+    projection = commands[0][-1]
+    assert '{{json .Names}}' in projection
+    assert '.Labels' not in projection and '.Command' not in projection and '{{json .}}' not in projection
+
+
 def test_all_required_read_tools_registered(client):
     metadata = client.get("/tools", headers=AUTH).json()["tools"]
     names = {item["name"] for item in metadata if item["risk_level"] == "READ_ONLY"}
