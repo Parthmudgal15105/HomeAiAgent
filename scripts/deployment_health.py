@@ -10,8 +10,11 @@ def production():
     results = {}
     for url in ('https://codeduel.online', 'https://codeduel.online/api/explore/problems', 'http://127.0.0.1:8085/healthz'):
         try:
-            with urllib.request.urlopen(url, timeout=15) as response:
-                results[url] = response.status
+            # Match the existing production baseline probe. The public edge
+            # rejects urllib's default user agent even while curl and browsers
+            # succeed; that 403 must not silently disable regression checks.
+            response = subprocess.run(['curl', '--max-time', '15', '-sS', '-o', '/dev/null', '-w', '%{http_code}', url], capture_output=True, text=True, timeout=20)
+            results[url] = int(response.stdout) if response.returncode == 0 else 0
         except Exception:
             results[url] = 0
     rows = subprocess.check_output(['docker', 'ps', '-a', '--filter', 'label=com.docker.compose.project=codeduel', '--format', '{{.Names}}|{{.Status}}'], text=True)

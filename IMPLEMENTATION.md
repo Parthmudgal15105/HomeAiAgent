@@ -1,32 +1,31 @@
 # Implementation status and resume guide
 
-Last verified: 10 September 2026, 16:22 UTC. **Overall status: incomplete; implementation exists and is running, but final model and deployment acceptance is pending.**
+Last verified: 11 September 2026, 15:24 UTC. **Overall status: incomplete — deployment works, but actual-model acceptance has not passed.**
 
 ## Source and deployment identity
 
 - Canonical Mac source: `/Users/parthmudgal/Documents/ChatGPT/HomeserverAI`.
-- GitHub: private `Parthmudgal15105/HomeAiAgent`, branch `main`. GitHub CLI authentication completed; initial source push follows this checkpoint.
-- Ubuntu target: `hp@100.98.193.60`, directory `/home/hp/ai-home-lab-operator`.
-- Dashboard: `http://100.98.193.60:3080` through Tailscale. Credentials are excluded from Git; never copy the server `.env` into source.
-- Server still runs the earlier archive deployment, not a verifiable Git commit. Latest Mac improvements are not deployed yet. Do not claim source/deployment parity until both commit hashes match.
+- GitHub: private `Parthmudgal15105/HomeAiAgent`, branch `main`; authentication and push work.
+- Ubuntu: `hp@100.98.193.60`, `/home/hp/ai-home-lab-operator`, now a Git checkout using a repository-only read-only deploy key.
+- Last verified deployed source and backend/frontend image revision: `7b8cbfb68b7d63b580473fd37f9c3cbb9bd16b9f`, matching published main before this checkpoint.
+- Dashboard: `http://100.98.193.60:3080` through Tailscale. Password handoff is in the Git-excluded local `.local-access.txt`; server secrets remain in server `.env`.
 
 ## Verified current state
 
-- Server reconnected over SSH. Six core containers, isolated demo and gateway are healthy after 33 hours. CodeDuel homepage/API/proxy checks return200 and all five workload containers are healthy. No unrelated workload changes or reboot performed.
-- Fresh test run: **150 Python tests passed**, covering backend, gateway, synthetic orchestration, topology, overview and secret scanner. Nine frontend authentication/UI helper tests passed; TypeScript and Next.js production build passed.
-- Secret scan:124 source files, zero findings. Only explicit invented test credentials are annotated as fixtures. `.env`, local access file, runtime data, backups and logs remain ignored.
-- New Mac functionality: typed generic service profiles (including CodeDuel, Nextcloud and Jellyfin), cached bounded server overview, configurable service selection, six quick actions, resolution duration, session expiry/logout tests, stronger credential redaction and bounded gateway output.
-- Local model provider now uses per-tool constrained schemas, complete-object extraction, full Pydantic validation, one repair retry, measured retry/failure/timing metrics and deterministic confidence ceilings with conflict penalties. Confidence is not empirically calibrated.
-- Fourteen runbooks now cover generic unavailable/502/crashed-container cases as well as existing application, database, queue, tunnel and host failures. New runbooks still require ingestion on deployment.
-- GitHub Actions CI and secret scan exist. `scripts/deploy.sh` performs clean-Git checks, fast-forward pull, backup, dedicated gateway update, Compose build/start, component checks and before/after CodeDuel comparison. Shell syntax checked; real deployment still pending.
+- SSH reconnected today. All six platform containers and isolated demo are healthy. No unrelated production changes or reboot performed.
+- Fresh complete Python suite: **152 passed** (backend, gateway, agent, fixtures, mocked recovery approval guards and deployment scanner). Last frontend validation: **9 tests passed**, typecheck and production build passed.
+- Previous deployed acceptance: gateway **19/19** live diagnostics; authentication/logout and private component checks passed; backend/frontend image provenance matched Git HEAD. GitHub CI passed for `7b8cbfb`.
+- Real local Ollama provider, typed constrained decisions, evidence persistence, evolving hypotheses, approval/replay protection, recovery verification, generic service topology, incident history and bounded server overview are implemented. Fourteen runbooks exist; final ingestion/retrieval recheck is pending.
+- **Completed actual qwen2.5:3b eight-case benchmark: 0/8 root-cause accuracy, Top-3 1/8, average 4.125 executed tools and 265.24 seconds per case.** All eight stopped after repeated diagnostic requests; 24 duplicate attempts were rejected. No invalid JSON or unsafe action attempts were recorded. This model is not accepted for production reasoning on these results.
+- Actual qwen3:4b comparison is running against the same eight fixtures/settings. Earlier standalone Redis success is a development result, not full-suite acceptance. See `reports/model-comparison/` for preserved measurements.
+- A real-model mocked Redis approval/recovery/PostgreSQL/RAG acceptance runner now exists in `evals/remediation.py`. Its two security tests pass; its actual-model lifecycle has not yet been run.
 
 ## Remaining acceptance work (resume here)
 
-1. Complete identical eight-case actual-Ollama benchmarks for qwen2.5:3b and qwen3:4b; choose the practical model using measured accuracy and latency. A Redis development run is underway. Earlier development failures were topology validation failures, not model accuracy results.
-2. Push reviewed source to GitHub; safely convert the existing server archive directory to a Git checkout while preserving `.env`, runtime data and backups. Configure repository-only read access, then deploy from GitHub and verify matching commits.
-3. Run a real read-only investigation and a real-model mocked Redis approval/recovery/RAG lifecycle. Do not stop production services to generate failures.
-4. Re-ingest14 runbooks and rerun retrieval, gateway, auth/logout, private-port, resource and persistence checks. Preserve separate deterministic, synthetic-LLM and live results.
-5. Update MODEL_EVALUATION.md, EVALUATION.md and final documentation with measured results; commit/push final reports and deploy that exact commit. Do not declare completion prematurely.
+1. Complete qwen3 eight-case evaluation; inspect failure causes, improve general model reliability if necessary, and repeat fair comparisons after any agent changes. Do not select a model based on JSON validity alone.
+2. Run actual selected-model read-only server investigation and mocked Redis approval/recovery/history retrieval lifecycle. Do not cause a production outage.
+3. Re-ingest fourteen runbooks; recheck retrieval, current live diagnostics, dashboard, private ports, resource usage and CodeDuel health.
+4. Update all final evaluation/deployment docs with measured results, scan secrets, push and deploy the final exact Git commit; verify both checkout and image revision parity.
 
 ## Future session procedure
 
@@ -92,3 +91,11 @@ A real Qwen3 Redis investigation exposed expensive prompt reprocessing: one meas
 ## Deployment permission correction — 10 September16:32UTC
 
 Live runbook ingestion caught a deployment issue: the initial Git conversion used umask077, creating newly tracked runbooks mode0600; the non-root backend could not read its mounted files. Added a deployment step granting read/traverse permissions only to tracked non-secret config/runbook/script mounts, and set the gateway installer's source/package umask022 while keeping its explicit secret files0600 and backups0700. Server `.env` remains untouched. The failure is an acceptance finding; retrieval success is not claimed until the corrected deployment is rechecked. Synthetic evaluations now write a progress checkpoint after every completed case so interrupted sessions retain measurable progress.
+
+## 11 September 2026 — resumed acceptance audit
+
+- Files: `IMPLEMENTATION.md`, `evals/remediation.py`, `evals/test_remediation.py`, `.github/workflows/ci.yml`, `scripts/deployment_health.py`, `reports/model-comparison/`.
+- Decision: preserve and report the failed actual Qwen 2.5 evaluation; compare Qwen 3 using identical fixtures and limits. Added isolated actual-model recovery acceptance tooling and CI coverage. Public production health checks use fixed-argument curl to match the working baseline probe.
+- Tests: full Python suite152 passed; one dependency deprecation warning.
+- Deployment: server remains healthy on7b8cbfb; new changes not deployed yet.
+- Limitation: actual-model root-cause acceptance remains unfulfilled. Next action: finish Qwen3 measurements and live acceptance.
