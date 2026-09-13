@@ -38,12 +38,14 @@ On 13 September 2026, `gemini-3.8-flash` with low thinking completed the synthet
 
 This is one synthetic scenario, not a broad accuracy or production-readiness claim. RAG and recovery were disabled in this benchmark, no production tool was called, and Google API processing may incur cost. A sanitized summary is stored in `reports/gemini-live-smoke.json`.
 
+The same provider was deployed on 13 September. Authenticated model health passed from the backend container, but post-deployment generation attempts returned HTTP429 because the key had reached Gemini's20-request free-tier quota after development testing. Those attempts executed no decision or diagnostic and do not change the passing local result; they also do not constitute a passing deployed inference test. Rerun after quota availability or a billing/quota change.
+
 ## Interpretation and limits
 
 Root-cause scoring uses declared lexical term groups and decisive diagnostic evidence. Citation accuracy checks that IDs belong to this incident; it does not prove semantic entailment. Small synthetic datasets cannot establish broad production accuracy or calibrated confidence. Confidence remains an explicitly labeled model estimate with conservative backend ceilings. Recovery for generic host symptoms is disabled until symptom-specific checks are configured; successful SSH alone cannot certify an arbitrary host recovery.
 
 Run `pytest` after installing `backend/requirements-dev.txt`, `python -m evals.run` for regression, and `python -m evals.run --provider PROVIDER --model MODEL` for Ollama or Gemini synthetic evaluation. Gemini reads its key only from `GEMINI_API_KEY`. Reports record unmeasured metrics as null with reasons.
 
-## Current live baseline —11 September2026
+## Prior live baseline —11 September2026
 
 Gateway19/19 diagnostics and dashboard authentication/logout passed again. All platform components are healthy; Tailscale3080 is reachable, while18000/18081/11434/15432/16333/5432/6333/2375 are not. During qwen3 inference: Ollama3.846GiB, backend71.12MiB, frontend49.61MiB, PostgreSQL35.56MiB, Qdrant50.03MiB, gateway144.41MiB. These are snapshots, not peak-memory guarantees. CodeDuel homepage200, API500 and API container unhealthy before any new deployment. Read-only gateway logs show MongoServerSelectionError/TLS alert80; the other four CodeDuel containers remain healthy. No CodeDuel service was changed.

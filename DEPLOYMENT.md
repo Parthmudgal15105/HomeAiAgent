@@ -14,6 +14,8 @@ Generated operator password and API credentials are in server `.env` (0600). SSH
 
 Reasoning defaults to local Ollama. To opt into Gemini, add `LLM_PROVIDER=gemini` and `GEMINI_API_KEY=<restricted key>` to the server's private `.env`; keep `GEMINI_MODEL=gemini-3.8-flash` and `GEMINI_THINKING_LEVEL=low` unless a measured evaluation justifies a change. Do not pass keys as CLI arguments or commit them. Gemini sends bounded redacted diagnostic context to Google, so review SECURITY.md first. Ollama still runs when local RAG is enabled because it supplies embeddings.
 
+Gemini model health verifies credentials and model access but does not consume a generation or prove inference availability. Treat HTTP429 as a quota failure: do not repeat rapidly, wait for the provider's retry window or raise the account quota, and rerun a synthetic generation before operational use. Provider fallback is intentionally not automatic.
+
 No public hostname is configured. Existing remote-managed Cloudflare ingress currently contains only codeduel.online/www.codeduel.online -> localhost8085. To add an AI hostname later, use the existing tunnel's dashboard, add a dedicated loopback web listener, authentication/access policy and HTTPS, and preserve both existing CodeDuel routes. Do not publish Ollama, gateway, PostgreSQL or Qdrant.
 
 ## Initial installation

@@ -1,36 +1,37 @@
 # Implementation status and resume guide
 
-Last verified: 13 September 2026, 07:38 UTC. **Overall status: incomplete; the existing deployment is healthy, optional Gemini reasoning now passes local integration testing, and deployment of these changes is pending.**
+Last verified: 13 September 2026, 07:54 UTC. **Overall status: incomplete; the Gemini-enabled deployment is healthy and the integration passes locally, but deployed generations are temporarily blocked by the supplied key's free-tier request quota.**
 
 ## Source and deployment identity
 
 - Canonical Mac source: `/Users/parthmudgal/Code/HomeAiAgent`.
 - GitHub: private `Parthmudgal15105/HomeAiAgent`, branch `main`; authentication and push work.
 - Ubuntu target: `hp@100.98.193.60`, `/home/hp/ai-home-lab-operator`, a Git checkout using a repository-only read-only deploy key.
-- Last verified deployed source and backend/frontend image revision: `7b8cbfb68b7d63b580473fd37f9c3cbb9bd16b9f`, matching published main before this checkpoint. The Gemini changes are not deployed yet.
+- The Gemini integration was first deployed as `7e529c9802235154c1ac8d223a9b89d0ec671d3d`; server source and both image revision labels are verified against published `main` after each deployment.
 - Dashboard: `http://100.98.193.60:3080` through Tailscale. Credentials are excluded from Git; never copy the server `.env` into source.
 
 ## Verified current state
 
-- Read-only SSH preflight found all six project containers and the isolated demo healthy, gateway active, and the deployed source/images aligned at `7b8cbfb`. CodeDuel homepage returned200 while its problems API returned500 before this deployment; preserve that preexisting baseline and do not attribute it to the operator update.
+- The guarded deployment completed with a mode-0700 application backup and an additional recoverable pre-Gemini environment backup. All six project containers and the isolated demo are healthy, the gateway is active, backend health is200, and the Tailscale dashboard is200.
 - Fresh post-merge verification: **161 Python tests passed**. Nine frontend tests, typecheck and the production build passed before the source merge; no frontend source changed in this integration.
 - Previous deployed acceptance: gateway **19/19** live diagnostics; authentication/logout and private component checks passed; backend/frontend image provenance matched Git HEAD. GitHub CI passed for `7b8cbfb`.
 - Real local Ollama provider, typed constrained decisions, evidence persistence, evolving hypotheses, approval/replay protection, recovery verification, generic service topology, incident history and bounded server overview are implemented. Fourteen runbooks exist; final ingestion/retrieval recheck is pending.
 - **Completed actual qwen2.5:3b eight-case benchmark: 0/8 root-cause accuracy, Top-3 1/8, average 4.125 executed tools and 265.24 seconds per case.** All eight stopped after repeated diagnostic requests; 24 duplicate attempts were rejected. No invalid JSON or unsafe action attempts were recorded. This model is not accepted for production reasoning on these results.
 - The original qwen3:4b comparison was stopped after its first case also failed on repeated requests; its partial report is retained. A revised provider now excludes completed finite diagnostic targets from the output grammar and requests a concise evidence assessment before choosing a decision. Its new eight-case Qwen3 benchmark is running; Qwen2.5 must be rerun with this same provider for fair comparison. Earlier standalone Redis success is a development result, not full-suite acceptance. See `reports/model-comparison/` for preserved measurements.
 - A real-model mocked Redis approval/recovery/PostgreSQL/RAG acceptance runner now exists in `evals/remediation.py`. Its two security tests pass; its actual-model lifecycle has not yet been run.
-- Optional Gemini reasoning uses the Interactions API, structured output, local Pydantic/policy validation, one repair retry, disabled API-side interaction storage, HTTPS/header authentication, and token/latency metrics. Ollama remains the default and the local embedding provider. The supplied key was used only in a temporary process environment.
+- Optional Gemini reasoning uses the Interactions API, structured output, local Pydantic/policy validation, one repair retry, disabled API-side interaction storage, HTTPS/header authentication, and token/latency metrics. Ollama remains the source default and the local embedding provider. Development used a temporary process environment; the deployed key exists only in the private server environment.
 - Live Gemini validation: direct structured smoke passed; the synthetic Redis incident passed1/1 in22.4611s across four requests with correct grounded diagnosis, three relevant diagnostics, and zero invalid/retried/failed/rejected/unsafe decisions. This is not a full accuracy benchmark.
-- Secret scanning now detects Google key formats; the pre-merge scan covered128 source files with zero findings. `.env`, local access files, runtime data, backups and logs remain ignored.
+- Secret scanning now detects Google key formats; the post-merge scan covered134 source files with zero findings. `.env`, local access files, runtime data, backups and logs remain ignored.
 - `scripts/deploy.sh` performs clean-Git checks, fast-forward pull, backup, dedicated gateway update, Compose build/start, component checks and before/after CodeDuel comparison.
+- The server uses Gemini as its reasoning provider and retains Ollama for embeddings. Authenticated model health succeeds. A deployed synthetic generation was attempted only after deployment, but Google returned HTTP429 for the key's20-request free-tier quota; no model decision or production diagnostic executed. CodeDuel remained at its pre-deployment baseline: homepage200, problems API500, API container unhealthy and its other four containers healthy.
 
 ## Remaining acceptance work (resume here)
 
-1. Complete identical eight-case benchmarks for the intended production reasoning provider; Gemini currently covers only Redis1/1, while fair reruns for local candidates remain incomplete.
-2. Commit/push the reviewed Gemini integration, configure the private server environment, deploy through `scripts/deploy.sh`, and verify matching checkout/image commits plus provider health.
+1. Wait for or increase the Gemini quota, then rerun the deployed synthetic Redis check. Keep a production fallback decision explicit rather than silently changing providers.
+2. Complete identical eight-case benchmarks for the intended production reasoning provider; Gemini currently covers only Redis1/1 locally, while fair reruns for local candidates remain incomplete.
 3. Run a real selected-model read-only server investigation and mocked Redis approval/recovery/history retrieval lifecycle. Do not cause a production outage.
 4. Re-ingest fourteen runbooks; recheck retrieval, current live diagnostics, dashboard, private ports, resource usage, persistence and CodeDuel health.
-5. Update final evaluation/deployment documentation with measured results, scan secrets, push and deploy the exact final Git commit.
+5. Preserve exact Git/source/image parity for subsequent changes and record all measured results without treating provider health as generation success.
 
 ## Future session procedure
 
@@ -43,6 +44,14 @@ Every subsequent entry must record date, phase, changed files, decision, tests, 
 # Implementation journal
 
 This file records actual progress and validation. Items are not complete until tested.
+
+## Gemini deployment — 13 September 2026, 07:54 UTC
+
+- Rebased the Gemini integration over upstream model-reliability changes, preserving finite-target duplicate prevention and the evidence-reasoning prompt. Post-merge verification passed161 Python tests, `git diff --check`, and a134-file secret scan with zero findings.
+- Published and deployed `7e529c9802235154c1ac8d223a9b89d0ec671d3d` through `scripts/deploy.sh`. The script created `backups/20260913T074811Z`, refreshed the gateway, built both images and reported gateway, database, Qdrant, Ollama, Gemini model authentication and frontend healthy. Checkout and backend/frontend labels matched the commit.
+- Stored the supplied Gemini key only in the Git-excluded server `.env` with mode0600 and retained a pre-change environment backup. The backend loaded provider `gemini`, model `gemini-3.8-flash`, and a non-empty secret without printing it.
+- Deployed synthetic generation attempts were rate-limited by Google's HTTP429 free-tier20-request quota after the earlier development calls. No decision or diagnostic executed in those attempts. The earlier local production-loop Redis result remains the completed generation test; deployed generation must be rerun after quota availability.
+- CodeDuel was unchanged and retained its pre-deployment state: homepage200, problems API500, API container unhealthy, remaining four containers healthy.
 
 ## Gemini provider integration — 13 September 2026, 07:38 UTC
 
