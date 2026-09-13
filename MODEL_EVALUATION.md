@@ -30,3 +30,7 @@ Qwen2.5 completed on10 September2026 using Ollama directly, production Agent, is
 | Average incident latency |265.24s|Running|
 
 Every Qwen2.5 case reached the three-rejected-decision safety limit by repeating prior diagnostics. Valid JSON alone did not produce a useful diagnosis. Model selection remains provisional until the identical Qwen3 comparison and live acceptance complete.
+
+## Optional Gemini provider
+
+`gemini-3.8-flash` is available as an explicit cloud reasoning option while Ollama remains the default and continues to provide local embeddings. A live Interactions API connectivity smoke returned valid structured JSON in6.7394seconds with no retry. The production-loop synthetic Redis scenario then passed in22.4611seconds across four requests with root-cause/evidence accuracy100% and zero invalid, repeated, rejected, unnecessary or unsafe decisions. Per-request latencies were3.4532s,5.6957s,6.3295s and6.8752s. This single scenario is integration evidence only; complete the same eight-case suite before comparing its diagnostic quality with local candidates.

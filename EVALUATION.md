@@ -1,10 +1,10 @@
 # Evaluation
 
-Evaluation separates deterministic orchestration from actual local-model performance. No production service is deliberately stopped.
+Evaluation separates deterministic orchestration from actual reasoning-model performance. No production service is deliberately stopped.
 
 ## Verified regression results
 
-- **155 Python tests passed**, covering gateway scopes/schemas/timeouts/HTTP rebinding/redaction, signed one-use approvals, models, migrations, hypotheses, evidence ownership, provider JSON validation/retry, RAG protocol, context bounds, controller routes and recovery.
+- **161 Python tests passed** on 13 September 2026, covering gateway scopes/schemas/timeouts/HTTP rebinding/redaction, signed one-use approvals, models, migrations, hypotheses, evidence ownership, Ollama/Gemini JSON validation and retry, RAG protocol, context bounds, controller routes and recovery.
 - Alembic upgrade and schema drift checks passed; combined development environment dependency check passed.
 - Nine frontend tests, Next.js production build and TypeScript checks passed again on11 September2026. Server-side browser-session/proxy tests passed: unauthenticated401, wrong-password401, login200, authenticated history200, cross-origin mutation403, arbitrary path404.
 - **19/19 live read-only gateway operations** executed successfully. A successful diagnostic operation can still report an unhealthy target; execution success is not service health.
@@ -32,11 +32,17 @@ This validates the real write/verification/RAG integration but uses an authored 
 
 Completed actual qwen2.5:3b evaluation:8 cases,0/8 root-cause accuracy,Top-3 accuracy1/8,4.125 average executed tools,14 unnecessary executed tools,0 repeated executions,24 rejected duplicate attempts,0 invalid JSON,0 unsafe action attempts,265.24s average diagnosis latency. All cases failed safely after three rejected decisions. These results do not qualify the model for production acceptance. Qwen3 full-suite comparison is in progress. See MODEL_EVALUATION.md for model load/memory/latency/JSON/tool-choice measurements. Do not substitute the scripted8/8 result for this benchmark.
 
+## Gemini integration smoke benchmark
+
+On 13 September 2026, `gemini-3.8-flash` with low thinking completed the synthetic `redis_down` scenario through the production `Agent` and mock gateway: **1/1 passed**, root-cause and top-three accuracy100%, evidence accuracy100%, three relevant read-only calls, zero unnecessary/repeated/unsafe calls, zero invalid JSON, retries, failed decisions or rejected decisions, and22.4611seconds total diagnosis latency across four model requests. The initial direct connectivity call also returned a valid structured decision in6.7394seconds. The first development attempts exposed and then fixed Gemini schema limitations around nested conditional hypothesis schemas and dynamic observation-ID enums; controller-side evidence ownership remains mandatory.
+
+This is one synthetic scenario, not a broad accuracy or production-readiness claim. RAG and recovery were disabled in this benchmark, no production tool was called, and Google API processing may incur cost. A sanitized summary is stored in `reports/gemini-live-smoke.json`.
+
 ## Interpretation and limits
 
 Root-cause scoring uses declared lexical term groups and decisive diagnostic evidence. Citation accuracy checks that IDs belong to this incident; it does not prove semantic entailment. Small synthetic datasets cannot establish broad production accuracy or calibrated confidence. Confidence remains an explicitly labeled model estimate with conservative backend ceilings. Recovery for generic host symptoms is disabled until symptom-specific checks are configured; successful SSH alone cannot certify an arbitrary host recovery.
 
-Run `pytest` after installing `backend/requirements-dev.txt`, `python -m evals.run` for regression, and `python -m evals.run --provider ollama --model MODEL` for real-model synthetic evaluation. Reports record unmeasured metrics as null with reasons.
+Run `pytest` after installing `backend/requirements-dev.txt`, `python -m evals.run` for regression, and `python -m evals.run --provider PROVIDER --model MODEL` for Ollama or Gemini synthetic evaluation. Gemini reads its key only from `GEMINI_API_KEY`. Reports record unmeasured metrics as null with reasons.
 
 ## Current live baseline —11 September2026
 

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from backend.app.gateway import DiagnosticGateway
-from backend.app.llm import OllamaLLMProvider
+from backend.app.llm import GeminiLLMProvider, OllamaLLMProvider, create_llm_provider
 from backend.app.rag import LocalRAG
 from conftest import REGISTRY
 
@@ -32,6 +32,84 @@ async def test_ollama_repairs_invalid_json_once_and_preserves_local_contract(sys
     assert provider.metrics['invalid_json'] == 1
     assert len(requests) == 2
     assert 'Repair' in requests[1]['messages'][-1]['content']
+
+
+@pytest.mark.asyncio
+async def test_gemini_uses_interactions_structured_output_without_leaking_key(system, monkeypatch):
+    settings, *_ = system
+    settings = settings.model_copy(update={
+        'llm_provider': 'gemini',
+        'gemini_api_key': settings.__class__(_env_file=None, gemini_api_key='unit-test-gemini-key').gemini_api_key,
+    })
+    requests = []
+    real_client = httpx.AsyncClient
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        assert request.url == 'https://generativelanguage.googleapis.com/v1beta/interactions'
+        assert request.headers['x-goog-api-key'] == 'unit-test-gemini-key'
+        assert 'unit-test-gemini-key' not in str(request.url)
+        assert body['model'] == 'gemini-3.8-flash'
+        assert body['store'] is False
+        assert body['generation_config']['thinking_level'] == 'low'
+        assert body['response_format']['mime_type'] == 'application/json'
+        encoded_schema = json.dumps(body['response_format']['schema'])
+        assert '"const"' not in encoded_schema
+        assert '"maxLength"' not in encoded_schema
+        assert '"$defs"' in encoded_schema
+        assert '"enum": ["STOP"]' in encoded_schema
+        assert body['input'] == '{"api_key":"[REDACTED]","observations":[]}'
+        return httpx.Response(200, json={
+            'status': 'completed',
+            'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': '{"decision_type":"STOP","reason":"Insufficient evidence"}'}]}],
+            'usage': {'total_input_tokens': 100, 'total_output_tokens': 12, 'total_thought_tokens': 8},
+        })
+
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    provider = create_llm_provider(settings)
+    assert isinstance(provider, GeminiLLMProvider)
+    decision = await provider.decide_next_action({'api_key': 'must-not-leave-process', 'observations': []})
+    assert decision.decision_type == 'STOP'
+    assert len(requests) == 1
+    assert provider.metrics['input_tokens'] == [100]
+    assert provider.metrics['output_tokens'] == [12]
+    assert provider.metrics['thought_tokens'] == [8]
+
+
+@pytest.mark.asyncio
+async def test_gemini_repairs_invalid_decision_once(system, monkeypatch):
+    settings, *_ = system
+    settings = settings.__class__(_env_file=None, gemini_api_key='unit-test-gemini-key')
+    real_client = httpx.AsyncClient
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        content = 'not JSON' if len(requests) == 1 else '{"decision_type":"STOP","reason":"Repaired"}'
+        return httpx.Response(200, json={
+            'status': 'completed',
+            'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': content}]}],
+        })
+
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    provider = GeminiLLMProvider(settings)
+    assert (await provider.decide_next_action({'observations': []})).reason == 'Repaired'
+    assert provider.metrics['invalid_json'] == 1
+    assert provider.metrics['retries'] == 1
+    assert 'previous response was invalid' in requests[1]['input']
+
+
+@pytest.mark.asyncio
+async def test_gemini_requires_key_and_official_https_endpoint(system):
+    settings, *_ = system
+    with pytest.raises(ValueError, match='GEMINI_API_KEY'):
+        await GeminiLLMProvider(settings).decide_next_action({'observations': []})
+    insecure = settings.__class__(_env_file=None, gemini_api_key='unit-test-gemini-key', gemini_base_url='http://example.com/v1beta')
+    with pytest.raises(ValueError, match='generativelanguage.googleapis.com'):
+        GeminiLLMProvider(insecure).endpoint()
+    configured = settings.__class__(_env_file=None, gemini_api_key='unit-test-gemini-key', gemini_model='gemini/model')
+    assert GeminiLLMProvider(configured).model_endpoint().endswith('/models/gemini%2Fmodel')
 
 
 @pytest.mark.asyncio

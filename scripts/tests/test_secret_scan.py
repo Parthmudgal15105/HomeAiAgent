@@ -13,6 +13,10 @@ def test_detects_token_literals_and_bound_credentials_without_echoing_values():
     assert findings == [{"path": "config.py", "line": 1, "rule": "provider-token"}]
     assert token not in str(findings)
     assert scan_text("config.txt", "postgresql://alice:" + "real-password" + "@db/app")
+    for google_key in ('AIza' + 'Z' * 35, 'AQ.' + 'Z' * 48):
+        result = scan_text('config.py', google_key)
+        assert result == [{"path": "config.py", "line": 1, "rule": "provider-token"}]
+        assert google_key not in str(result)
 
 
 def test_explicit_test_fixtures_and_template_substitutions_are_allowed():

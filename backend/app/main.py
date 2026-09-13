@@ -12,7 +12,7 @@ from .agent import Agent, asdict
 from .config import Settings, get_settings
 from .db import make_database
 from .gateway import DiagnosticGateway
-from .llm import OllamaLLMProvider
+from .llm import GeminiLLMProvider, create_llm_provider
 from .models import Action, AuditEvent, EvaluationRun, Incident, now
 from .rag import LocalRAG
 from .safety import redact
@@ -30,7 +30,7 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
     if sessions is None:
         engine, sessions = make_database(settings.database_url)
     gateway = gateway or DiagnosticGateway(settings)
-    llm = llm or OllamaLLMProvider(settings)
+    llm = llm or create_llm_provider(settings)
     rag = rag or (LocalRAG(settings) if settings.rag_enabled else None)
     agent = Agent(settings, sessions, gateway, llm, rag)
     service = IncidentService(settings, sessions, agent, gateway, rag)
@@ -85,22 +85,29 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
 
     @router.get('/health')
     async def stack_health():
-        targets = {'gateway': settings.gateway_url.rstrip('/') + '/healthz', 'ollama': settings.ollama_base_url.rstrip('/') + '/api/tags', 'qdrant': settings.qdrant_url.rstrip('/') + '/readyz'}
-        async def check(name, url):
+        targets = {'gateway': (settings.gateway_url.rstrip('/') + '/healthz', {}), 'qdrant': (settings.qdrant_url.rstrip('/') + '/readyz', {})}
+        if settings.llm_provider == 'ollama' or settings.rag_enabled:
+            targets['ollama'] = (settings.ollama_base_url.rstrip('/') + '/api/tags', {})
+        if settings.llm_provider == 'gemini':
+            targets['gemini'] = (GeminiLLMProvider(settings).model_endpoint(), {'x-goog-api-key': settings.gemini_api_key.get_secret_value()})
+        async def check(name, target):
+            url, headers = target
             try:
                 async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-                    response = await client.get(url)
+                    response = await client.get(url, headers=headers)
                     response.raise_for_status()
                     result = {'status': 'ok'}
                     if name == 'ollama':
                         models = [m['name'] for m in response.json().get('models', [])]
                         result.update({'models': models, 'reasoning_model': settings.ollama_model, 'embedding_model': settings.ollama_embedding_model, 'reasoning_model_loaded': settings.ollama_model in models})
+                    elif name == 'gemini':
+                        result.update({'reasoning_model': settings.gemini_model, 'thinking_level': settings.gemini_thinking_level})
                     return name, result
             except Exception as exc:
                 return name, {'status': 'unavailable', 'error_type': type(exc).__name__}
         statuses = dict(await asyncio.gather(*(check(name, url) for name, url in targets.items())))
         statuses['database'] = await health()
-        return {'components': statuses, 'writes_enabled': settings.enable_write_actions, 'rag_enabled': settings.rag_enabled, 'agent_max_steps': settings.agent_max_steps}
+        return {'components': statuses, 'llm_provider': settings.llm_provider, 'writes_enabled': settings.enable_write_actions, 'rag_enabled': settings.rag_enabled, 'agent_max_steps': settings.agent_max_steps}
 
     @router.get('/incidents')
     async def list_incidents(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
@@ -133,7 +140,7 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
                 raise HTTPException(409, 'Incident cannot start an investigation in its current state')
             active = sum(not t.done() for t in tasks.values())
             if active >= settings.agent_max_parallel_incidents:
-                raise HTTPException(409, 'Local model is already investigating another incident; retry after it finishes')
+                raise HTTPException(409, 'The reasoning provider is already investigating another incident; retry after it finishes')
             claimed = session.execute(update(Incident).where(Incident.id == incident_id, Incident.status.in_(['OPEN', 'FAILED'])).values(status='INVESTIGATING', updated_at=now()))
             if claimed.rowcount != 1:
                 raise HTTPException(409, 'Incident was already claimed')

@@ -1,0 +1,37 @@
+{
+  "created_at": "2026-09-13T07:31:14.728330+00:00",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "api": "Interactions API",
+  "credential_persisted": false,
+  "synthetic_only": true,
+  "scenario": "redis_down",
+  "settings": {
+    "thinking_level": "low",
+    "max_output_tokens": 4096,
+    "agent_max_steps": 8,
+    "agent_llm_timeout_seconds": 120,
+    "agent_max_runtime_seconds": 300
+  },
+  "result": {
+    "passed": true,
+    "root_cause_accuracy": 1.0,
+    "top_3_root_cause_accuracy": 1.0,
+    "evidence_accuracy": 1.0,
+    "tool_calls": 3,
+    "unnecessary_tool_calls": 0,
+    "repeated_tool_calls": 0,
+    "unsafe_action_attempts": 0,
+    "invalid_json_responses": 0,
+    "model_retries": 0,
+    "failed_model_decisions": 0,
+    "rejected_decisions": 0,
+    "diagnosis_latency_seconds": 22.4611,
+    "model_request_latencies_ms": [3453.2, 5695.7, 6329.5, 6875.2]
+  },
+  "limitations": [
+    "One synthetic scenario is not a broad model-accuracy benchmark.",
+    "RAG retrieval and recovery verification were disabled.",
+    "No production diagnostic or write tool was called."
+  ]
+}

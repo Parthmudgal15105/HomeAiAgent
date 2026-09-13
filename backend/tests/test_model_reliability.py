@@ -6,7 +6,7 @@ import httpx
 import pytest
 from jsonschema import Draft202012Validator
 
-from backend.app.llm import OllamaLLMProvider, decision_schema, parse_decision
+from backend.app.llm import OllamaLLMProvider, decision_schema, gemini_schema, parse_decision
 from backend.app.safety import evidence_confidence, redact
 from conftest import REGISTRY
 
@@ -60,6 +60,18 @@ def test_model_grammar_preserves_exact_tool_schema_and_owned_citations():
         assert not validator.is_valid({**call, 'tool': tool, 'arguments': arguments})
     call['hypothesis_updates'] = [{'description': 'Container unavailable', 'confidence': .4, 'supporting_observation_ids': ['unowned']}]
     assert not validator.is_valid(call)
+
+
+def test_gemini_schema_defers_dynamic_evidence_ownership_to_agent():
+    schema = gemini_schema(
+        decision_schema({'tools': list(REGISTRY.values()), 'observations': [{'id': 'owned-id'}, {'id': 'second-id'}]}),
+        ['owned-id', 'second-id'],
+    )
+    encoded = json.dumps(schema)
+    assert 'owned-id' not in encoded
+    assert 'second-id' not in encoded
+    assert 'sandbox' in encoded  # Tool target allowlists stay in the schema.
+    assert 'TOOL_CALL' in encoded
 
 
 @pytest.mark.asyncio
@@ -123,3 +135,8 @@ def test_whole_headers_and_database_uris_are_redacted(secret):
     assert 'first-secret' not in safe
     assert 'second-secret' not in safe
     assert 'database.invalid' not in safe
+
+
+def test_gemini_key_formats_are_redacted():
+    for key in ('AIza' + 'Z' * 35, 'AQ.' + 'Z' * 48):
+        assert key not in redact('credential=' + key)

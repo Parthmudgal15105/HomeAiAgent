@@ -2,6 +2,7 @@
 
 python -m evals.run
 python -m evals.run --provider ollama --model qwen2.5:3b
+LLM_PROVIDER=gemini GEMINI_API_KEY=... python -m evals.run --provider gemini --model gemini-3.8-flash
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from uuid import uuid4
 
 from backend.app.config import Settings
 from backend.app.db import Base, make_database
-from backend.app.llm import OllamaLLMProvider
+from backend.app.llm import create_llm_provider
 from backend.app.models import EvaluationRun, Incident, AuditEvent
 from sqlalchemy import select
 
@@ -35,7 +36,7 @@ async def evaluate_scenario(scenario: Scenario, provider_name: str, settings: Se
     engine, sessions = make_database("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     gateway = MockDiagnosticGateway(scenario)
-    provider = ScriptedProvider(scenario) if provider_name == "scripted" else OllamaLLMProvider(settings)
+    provider = ScriptedProvider(scenario) if provider_name == "scripted" else create_llm_provider(settings.model_copy(update={'llm_provider': provider_name}))
     recording = RecordingProvider(provider, await gateway.registry())
     with sessions() as session:
         incident = Incident(title=scenario.symptom[:300], description=scenario.symptom, service="codeduel")
@@ -89,8 +90,8 @@ async def evaluate_scenario(scenario: Scenario, provider_name: str, settings: Se
 
 
 async def run_suite(provider_name: str = "scripted", scenario_ids: list[str] | None = None, settings: Settings | None = None, progress_file: Path | None = None) -> dict[str, Any]:
-    if provider_name not in {"scripted", "ollama"}:
-        raise ValueError("Provider must be scripted or ollama")
+    if provider_name not in {"scripted", "ollama", "gemini"}:
+        raise ValueError("Provider must be scripted, ollama or gemini")
     selected = [SCENARIOS_BY_ID[item] for item in scenario_ids] if scenario_ids else list(SCENARIOS)
     settings = settings or Settings(_env_file=None)
     with tempfile.TemporaryDirectory(prefix="homeai-evaluation-") as directory:
@@ -103,8 +104,8 @@ async def run_suite(provider_name: str = "scripted", scenario_ids: list[str] | N
             results.append(result)
             if progress_file:
                 progress_file.parent.mkdir(parents=True, exist_ok=True)
-                progress_file.write_text(json.dumps({'complete': False, 'provider': provider_name, 'model': settings.ollama_model, 'completed_cases': len(results), 'planned_cases': len(selected), 'metrics': aggregate(results), 'results': results}, indent=2))
-            print(json.dumps({"progress": scenario.id, "model": settings.ollama_model if provider_name == "ollama" else "scripted", "metrics": result["metrics"], "failure": result["failure"]}), flush=True)
+                progress_file.write_text(json.dumps({'complete': False, 'provider': provider_name, 'model': model_name(provider_name, settings), 'completed_cases': len(results), 'planned_cases': len(selected), 'metrics': aggregate(results), 'results': results}, indent=2))
+            print(json.dumps({"progress": scenario.id, "model": model_name(provider_name, settings) or "scripted", "metrics": result["metrics"], "failure": result["failure"]}), flush=True)
     metrics = aggregate(results)
     if provider_name == "scripted":
         metrics["unmeasured"]["invalid_llm_json_rate"] = "No model is called in scripted mode; JSON reliability is not measured."
@@ -112,15 +113,32 @@ async def run_suite(provider_name: str = "scripted", scenario_ids: list[str] | N
         "id": str(uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "provider": provider_name,
-        "model": settings.ollama_model if provider_name == "ollama" else None,
-        "evaluation_type": "scripted orchestration and safety regression" if provider_name == "scripted" else "local model diagnosis benchmark on synthetic infrastructure",
+        "model": model_name(provider_name, settings),
+        "evaluation_type": "scripted orchestration and safety regression" if provider_name == "scripted" else f"{provider_name} model diagnosis benchmark on synthetic infrastructure",
         "fixture_sha256": hashlib.sha256(Path(__file__).with_name("scenarios.py").read_bytes()).hexdigest(),
         "synthetic_only": True,
         "production_agent": "backend.app.agent.Agent",
-        "settings": {key: getattr(settings, key) for key in ("ollama_num_ctx", "ollama_num_predict", "ollama_num_thread", "agent_max_steps", "agent_llm_timeout_seconds", "agent_max_runtime_seconds", "agent_context_chars")},
+        "settings": evaluation_settings(provider_name, settings),
         "metrics": metrics,
         "results": results,
-    }
+}
+
+
+def model_name(provider_name: str, settings: Settings) -> str | None:
+    if provider_name == 'ollama':
+        return settings.ollama_model
+    if provider_name == 'gemini':
+        return settings.gemini_model
+    return None
+
+
+def evaluation_settings(provider_name: str, settings: Settings) -> dict[str, Any]:
+    names = ['agent_max_steps', 'agent_llm_timeout_seconds', 'agent_max_runtime_seconds', 'agent_context_chars']
+    if provider_name == 'ollama':
+        names += ['ollama_num_ctx', 'ollama_num_predict', 'ollama_num_thread']
+    elif provider_name == 'gemini':
+        names += ['gemini_thinking_level', 'gemini_max_output_tokens']
+    return {key: getattr(settings, key) for key in names}
 
 
 def persist_report(report: dict[str, Any], output_dir: Path, database_url: str | None = None) -> Path:
@@ -141,9 +159,9 @@ def persist_report(report: dict[str, Any], output_dir: Path, database_url: str |
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=["scripted", "ollama"], default="scripted")
+    parser.add_argument("--provider", choices=["scripted", "ollama", "gemini"], default="scripted")
     parser.add_argument("--scenario", action="append", choices=list(SCENARIOS_BY_ID), help="Select case(s); default runs all eight")
-    parser.add_argument("--model", help="Override OLLAMA_MODEL for real model evaluation")
+    parser.add_argument("--model", help="Override the selected provider's model")
     parser.add_argument("--ollama-base-url", help="Override local Ollama URL")
     parser.add_argument("--max-steps", type=int, help="Override the bounded agent step limit")
     parser.add_argument("--llm-timeout", type=int, help="Per-call LLM timeout in seconds")
@@ -151,9 +169,10 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent / "results")
     parser.add_argument("--persist-db", action="store_true", help="Also add EvaluationRun to DATABASE_URL; tables must already exist")
     args = parser.parse_args()
+    model_setting = 'ollama_model' if args.provider == 'ollama' else 'gemini_model'
     overrides = {
         key: value for key, value in {
-            "ollama_model": args.model,
+            model_setting: args.model,
             "ollama_base_url": args.ollama_base_url,
             "agent_max_steps": args.max_steps,
             "agent_llm_timeout_seconds": args.llm_timeout,
@@ -161,7 +180,8 @@ def main() -> int:
         }.items() if value is not None
     }
     settings = Settings(**overrides)
-    progress = args.output_dir / ('progress-' + args.provider + '-' + settings.ollama_model.replace(':', '-').replace('/', '-') + '.json')
+    selected_model = model_name(args.provider, settings) or 'scripted'
+    progress = args.output_dir / ('progress-' + args.provider + '-' + selected_model.replace(':', '-').replace('/', '-') + '.json')
     report = asyncio.run(run_suite(args.provider, args.scenario, settings, progress))
     path = persist_report(report, args.output_dir, settings.database_url if args.persist_db else None)
     progress.write_text(json.dumps({'complete': True, 'report_path': str(path), 'metrics': report['metrics']}, indent=2))

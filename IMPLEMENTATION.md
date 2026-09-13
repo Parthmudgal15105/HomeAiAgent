@@ -1,31 +1,36 @@
 # Implementation status and resume guide
 
-Last verified: 11 September 2026, 15:33 UTC. **Overall status: incomplete — deployment works, but actual-model acceptance has not passed.**
+Last verified: 13 September 2026, 07:38 UTC. **Overall status: incomplete; the existing deployment is healthy, optional Gemini reasoning now passes local integration testing, and deployment of these changes is pending.**
 
 ## Source and deployment identity
 
-- Canonical Mac source: `/Users/parthmudgal/Documents/ChatGPT/HomeserverAI`.
+- Canonical Mac source: `/Users/parthmudgal/Code/HomeAiAgent`.
 - GitHub: private `Parthmudgal15105/HomeAiAgent`, branch `main`; authentication and push work.
-- Ubuntu: `hp@100.98.193.60`, `/home/hp/ai-home-lab-operator`, now a Git checkout using a repository-only read-only deploy key.
-- Last verified deployed source and backend/frontend image revision: `7b8cbfb68b7d63b580473fd37f9c3cbb9bd16b9f`, matching published main before this checkpoint.
-- Dashboard: `http://100.98.193.60:3080` through Tailscale. Password handoff is in the Git-excluded local `.local-access.txt`; server secrets remain in server `.env`.
+- Ubuntu target: `hp@100.98.193.60`, `/home/hp/ai-home-lab-operator`, a Git checkout using a repository-only read-only deploy key.
+- Last verified deployed source and backend/frontend image revision: `7b8cbfb68b7d63b580473fd37f9c3cbb9bd16b9f`, matching published main before this checkpoint. The Gemini changes are not deployed yet.
+- Dashboard: `http://100.98.193.60:3080` through Tailscale. Credentials are excluded from Git; never copy the server `.env` into source.
 
 ## Verified current state
 
-- SSH reconnected today. All six platform containers and isolated demo are healthy. No unrelated production changes or reboot performed.
-- Fresh complete Python suite: **155 passed** (backend, gateway, agent, fixtures, mocked recovery approval guards and deployment scanner). Last frontend validation: **9 tests passed**, typecheck and production build passed.
+- Read-only SSH preflight found all six project containers and the isolated demo healthy, gateway active, and the deployed source/images aligned at `7b8cbfb`. CodeDuel homepage returned200 while its problems API returned500 before this deployment; preserve that preexisting baseline and do not attribute it to the operator update.
+- Fresh post-merge verification: **161 Python tests passed**. Nine frontend tests, typecheck and the production build passed before the source merge; no frontend source changed in this integration.
 - Previous deployed acceptance: gateway **19/19** live diagnostics; authentication/logout and private component checks passed; backend/frontend image provenance matched Git HEAD. GitHub CI passed for `7b8cbfb`.
 - Real local Ollama provider, typed constrained decisions, evidence persistence, evolving hypotheses, approval/replay protection, recovery verification, generic service topology, incident history and bounded server overview are implemented. Fourteen runbooks exist; final ingestion/retrieval recheck is pending.
 - **Completed actual qwen2.5:3b eight-case benchmark: 0/8 root-cause accuracy, Top-3 1/8, average 4.125 executed tools and 265.24 seconds per case.** All eight stopped after repeated diagnostic requests; 24 duplicate attempts were rejected. No invalid JSON or unsafe action attempts were recorded. This model is not accepted for production reasoning on these results.
 - The original qwen3:4b comparison was stopped after its first case also failed on repeated requests; its partial report is retained. A revised provider now excludes completed finite diagnostic targets from the output grammar and requests a concise evidence assessment before choosing a decision. Its new eight-case Qwen3 benchmark is running; Qwen2.5 must be rerun with this same provider for fair comparison. Earlier standalone Redis success is a development result, not full-suite acceptance. See `reports/model-comparison/` for preserved measurements.
 - A real-model mocked Redis approval/recovery/PostgreSQL/RAG acceptance runner now exists in `evals/remediation.py`. Its two security tests pass; its actual-model lifecycle has not yet been run.
+- Optional Gemini reasoning uses the Interactions API, structured output, local Pydantic/policy validation, one repair retry, disabled API-side interaction storage, HTTPS/header authentication, and token/latency metrics. Ollama remains the default and the local embedding provider. The supplied key was used only in a temporary process environment.
+- Live Gemini validation: direct structured smoke passed; the synthetic Redis incident passed1/1 in22.4611s across four requests with correct grounded diagnosis, three relevant diagnostics, and zero invalid/retried/failed/rejected/unsafe decisions. This is not a full accuracy benchmark.
+- Secret scanning now detects Google key formats; the pre-merge scan covered128 source files with zero findings. `.env`, local access files, runtime data, backups and logs remain ignored.
+- `scripts/deploy.sh` performs clean-Git checks, fast-forward pull, backup, dedicated gateway update, Compose build/start, component checks and before/after CodeDuel comparison.
 
 ## Remaining acceptance work (resume here)
 
-1. Complete qwen3 eight-case evaluation; inspect failure causes, improve general model reliability if necessary, and repeat fair comparisons after any agent changes. Do not select a model based on JSON validity alone.
-2. Run actual selected-model read-only server investigation and mocked Redis approval/recovery/history retrieval lifecycle. Do not cause a production outage.
-3. Re-ingest fourteen runbooks; recheck retrieval, current live diagnostics, dashboard, private ports, resource usage and CodeDuel health.
-4. Update all final evaluation/deployment docs with measured results, scan secrets, push and deploy the final exact Git commit; verify both checkout and image revision parity.
+1. Complete identical eight-case benchmarks for the intended production reasoning provider; Gemini currently covers only Redis1/1, while fair reruns for local candidates remain incomplete.
+2. Commit/push the reviewed Gemini integration, configure the private server environment, deploy through `scripts/deploy.sh`, and verify matching checkout/image commits plus provider health.
+3. Run a real selected-model read-only server investigation and mocked Redis approval/recovery/history retrieval lifecycle. Do not cause a production outage.
+4. Re-ingest fourteen runbooks; recheck retrieval, current live diagnostics, dashboard, private ports, resource usage, persistence and CodeDuel health.
+5. Update final evaluation/deployment documentation with measured results, scan secrets, push and deploy the exact final Git commit.
 
 ## Future session procedure
 
@@ -38,6 +43,14 @@ Every subsequent entry must record date, phase, changed files, decision, tests, 
 # Implementation journal
 
 This file records actual progress and validation. Items are not complete until tested.
+
+## Gemini provider integration — 13 September 2026, 07:38 UTC
+
+- Added configurable `LLM_PROVIDER=ollama|gemini`; Ollama remains the default and local embedding provider. Gemini targets stable `gemini-3.8-flash` through the Interactions API with low thinking, bounded output, request storage disabled and no SDK dependency.
+- Added provider selection to the backend, authenticated Gemini health reporting, evaluation CLI support, latency/token metrics, safe API errors, Google key redaction/scanning, documentation and tests. The key is a Pydantic secret and is sent only in the `x-goog-api-key` header to the validated Google endpoint.
+- Live development exposed Gemini rejecting a conditional nested hypothesis schema and repeated dynamic observation-ID enums. The final provider uses Gemini-compatible schema constraints while the controller remains authoritative for evidence ownership and exact tool targets. Invalid hypothesis metadata is audited and ignored independently; it cannot authorize or block a separately valid read-only diagnostic.
+- Verification:156 Python tests,9 frontend tests, TypeScript, Next.js production build, diff check and128-file secret scan passed. Live direct structured smoke passed in6.7394s. Production-loop synthetic Redis diagnosis passed1/1 in22.4611s with zero invalid/retried/failed/rejected/unsafe decisions. Full eight-case quality evaluation remains pending.
+- Deployment status at this checkpoint: server checkout and running images still match clean commit `7b8cbfb`; Gemini environment variables are absent. All project containers and the gateway are healthy. CodeDuel homepage is200 and its problems API is500 before deployment. No server change has yet been made.
 
 ## Phase 1 — inventory (complete)
 

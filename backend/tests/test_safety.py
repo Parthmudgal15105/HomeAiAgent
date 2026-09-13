@@ -93,6 +93,32 @@ async def test_duplicate_protection_and_bounded_invalid_decisions(system):
 
 
 @pytest.mark.asyncio
+async def test_invalid_hypothesis_metadata_does_not_block_safe_diagnostic(system):
+    _, sessions, gateway, agent, _, incident_id = system
+    contexts = []
+
+    class Provider:
+        async def decide_next_action(self, context):
+            contexts.append(context)
+            if not context['observations']:
+                return Decision(
+                    decision_type='TOOL_CALL', tool='docker_list', arguments={},
+                    hypothesis_updates=[HypothesisUpdate(description='Container is healthy', confidence=.8, status='ELIMINATED')],
+                )
+            return Decision(decision_type='STOP', reason='Test complete')
+
+    agent.llm = Provider()
+    await agent.investigate(incident_id)
+    assert len(gateway.calls) == 1
+    assert 'Hypothesis update ignored' in contexts[1]['validation_feedback']
+    with sessions() as session:
+        incident = session.get(Incident, incident_id)
+        assert incident.status == 'OPEN'
+        assert len(incident.observations) == 1
+        assert list(incident.hypotheses) == []
+
+
+@pytest.mark.asyncio
 async def test_agent_never_executes_unapproved_model_write(system):
     _, sessions, gateway, agent, _, incident_id = system
     class UnsafeProvider:

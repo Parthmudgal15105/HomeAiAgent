@@ -12,7 +12,7 @@ PATTERNS = [
     (re.compile(r'(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@'), r'\1[REDACTED]@'),
     (re.compile(r'''(?i)((?:password|passwd|secret|[\w-]*token|authorization|api[_-]?key|cookie|session[_-]?(?:id|key)?|mongodb_uri|mongo_uri|database_url|redis_url)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)'''), r'\1[REDACTED]'),
     (re.compile(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'), '[REDACTED JWT]'),
-    (re.compile(r'\b(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b'), '[REDACTED KEY]'),
+    (re.compile(r'\b(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_-]{40,})\b'), '[REDACTED KEY]'),
     (re.compile(r'\beyJ[A-Za-z0-9_+/=-]{24,}'), '[REDACTED ENCODED CREDENTIAL]'),
     (re.compile(r'-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----'), '[REDACTED PRIVATE KEY]'),
 ]

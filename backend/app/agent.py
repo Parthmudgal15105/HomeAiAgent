@@ -229,7 +229,15 @@ class Agent:
                 decision = Decision.model_validate(decision)
             self.audit(incident_id, 'model_decision', {'step': step + 1, 'latency_ms': round((time.monotonic() - llm_started) * 1000), 'decision': decision.model_dump()})
             try:
-                self.update_hypotheses(incident_id, decision.hypothesis_updates)
+                hypothesis_feedback = ''
+                try:
+                    self.update_hypotheses(incident_id, decision.hypothesis_updates)
+                except ValueError as exc:
+                    # Hypothesis metadata cannot authorize a tool. Reject it
+                    # independently so a separately valid, read-only decision
+                    # can still make progress and receive corrective feedback.
+                    hypothesis_feedback = 'Hypothesis update ignored: ' + str(redact(str(exc), 800))
+                    self.audit(incident_id, 'hypothesis_update_rejected', {'step': step + 1, 'error': hypothesis_feedback})
                 if decision.decision_type == 'TOOL_CALL':
                     validate_tool(registry, decision.tool, decision.arguments)
                     call = signature(decision.tool, decision.arguments)
@@ -245,7 +253,7 @@ class Agent:
                     result['duration_ms'] = round((time.monotonic() - tool_started) * 1000, 1)
                     observation_id = self.record_observation(incident_id, decision.tool, decision.arguments, result, decision.reason)
                     self.audit(incident_id, 'tool_result', {'step': step + 1, 'tool': decision.tool, 'ok': result.get('ok'), 'duration_ms': result['duration_ms'], 'observation_id': observation_id})
-                    feedback = ''
+                    feedback = hypothesis_feedback
                 elif decision.decision_type == 'DIAGNOSIS':
                     self.save_diagnosis(incident_id, decision, registry)
                     return

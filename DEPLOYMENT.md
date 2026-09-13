@@ -12,6 +12,8 @@ ssh -L 3080:100.98.193.60:3080 hp@100.98.193.60
 
 Generated operator password and API credentials are in server `.env` (0600). SSH credentials are not saved in the repository. `AIOPS_ADMIN_PASSWORD` is the browser sign-in password. `SESSION_SECRET` signs an HttpOnly SameSite=Strict eight-hour cookie. HTTP cookies are permitted for the Tailscale-only endpoint; Tailscale encrypts the transport. Configure HTTPS and COOKIE_SECURE=true before exposing outside that network.
 
+Reasoning defaults to local Ollama. To opt into Gemini, add `LLM_PROVIDER=gemini` and `GEMINI_API_KEY=<restricted key>` to the server's private `.env`; keep `GEMINI_MODEL=gemini-3.8-flash` and `GEMINI_THINKING_LEVEL=low` unless a measured evaluation justifies a change. Do not pass keys as CLI arguments or commit them. Gemini sends bounded redacted diagnostic context to Google, so review SECURITY.md first. Ollama still runs when local RAG is enabled because it supplies embeddings.
+
 No public hostname is configured. Existing remote-managed Cloudflare ingress currently contains only codeduel.online/www.codeduel.online -> localhost8085. To add an AI hostname later, use the existing tunnel's dashboard, add a dedicated loopback web listener, authentication/access policy and HTTPS, and preserve both existing CodeDuel routes. Do not publish Ollama, gateway, PostgreSQL or Qdrant.
 
 ## Initial installation
@@ -34,7 +36,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 Gateway installation needs `python3.14-venv` on this Ubuntu26.04 host. It creates `/opt/aiops-gateway`, `/etc/aiops-gateway.env`, `/var/lib/aiops-gateway`, `aiops-gateway` system user and `aiops-gateway.service`. Gateway code/config are root-owned; persistent writes are restricted to its approval ledger directory, with a separate private temporary directory. Its Docker group privilege is a trusted security boundary with host-root-equivalent power; see SECURITY.md.
 
-The checked-in environment example starts with backend writes disabled. The current server `.env` and installed gateway enable writes only for `aiops-demo`; all 22 preexisting containers remain read-only, and no systemd service is writable. `config/gateway.json` is the source policy, while the running gateway reads its installed copy at `/opt/aiops-gateway/config/gateway.json`. Editing the source does not change the installed policy until an intentional gateway update. Enabling production targets requires actual local-model validation on at least three scenarios and a separate scope/verification review; a passing deterministic demo does not satisfy that model-validation gate.
+The checked-in environment example starts with backend writes disabled. The current server `.env` and installed gateway enable writes only for `aiops-demo`; all 22 preexisting containers remain read-only, and no systemd service is writable. `config/gateway.json` is the source policy, while the running gateway reads its installed copy at `/opt/aiops-gateway/config/gateway.json`. Editing the source does not change the installed policy until an intentional gateway update. Enabling production targets requires validation with the actually configured reasoning model on at least three scenarios and a separate scope/verification review; a passing deterministic demo does not satisfy that model-validation gate.
 
 Production services use `unless-stopped`, resource limits, health checks and rotated Docker logs. Gateway is enabled with systemd and restarts on failure. Existing Docker/Tailscale services were already enabled. If the Tailscale interface is late after reboot, the frontend restarts until binding succeeds. No full machine reboot is necessary for installation.
 
@@ -74,6 +76,8 @@ pytest
 python -m evals.run
 # Actual local-model benchmark against mocked infrastructure
 python -m evals.run --provider ollama --model qwen2.5:3b
+# Actual Gemini benchmark; reads GEMINI_API_KEY from the private environment
+python -m evals.run --provider gemini --model gemini-3.8-flash
 ```
 
 Do not present scripted benchmark accuracy as model accuracy. Evaluation reports identify their provider and fixture hash. Confidence is a model estimate with deterministic ceilings, not empirically calibrated probability.

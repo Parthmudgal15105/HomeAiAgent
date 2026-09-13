@@ -1,6 +1,6 @@
 # Local AI Home-Lab Operator architecture
 
-The application investigates infrastructure incidents with a local model that chooses constrained diagnostics. PostgreSQL persists observations, hypotheses, proposed actions, and evidence-backed reports. A separate host gateway executes the approved diagnostic vocabulary. The model has no shell tool.
+The application investigates infrastructure incidents with a configurable reasoning model that chooses constrained diagnostics. Ollama is the private local default; Gemini is an explicit cloud option. PostgreSQL persists observations, hypotheses, proposed actions, and evidence-backed reports. A separate host gateway executes the approved diagnostic vocabulary. The model has no shell tool.
 
 This document describes the implementation and configured deployment. Live validation and measured model results belong in `IMPLEMENTATION.md`, `DEPLOYMENT.md`, and `MODEL_EVALUATION.md`; a diagram or configured health check is not proof that a service is running.
 
@@ -12,7 +12,7 @@ flowchart TD
     Web --> API[FastAPI incident controller]
     API --> PG[(PostgreSQL)]
     API --> Agent[Bounded Python agent]
-    Agent --> LLM[Local Ollama reasoning model]
+    Agent --> LLM[Ollama or Gemini reasoning provider]
     Agent --> RAG[Local retrieval service]
     RAG --> Embed[Ollama embedding model]
     RAG --> Qdrant[(Qdrant)]
@@ -29,7 +29,7 @@ flowchart TD
 
 The frontend displays incident history, investigation progress, observations, hypotheses, topology, diagnoses, and approval controls. Its server-side proxy holds the backend bearer token. The browser receives an expiring signed session cookie after operator authentication. The UI polls incident state; it does not run host commands.
 
-FastAPI uses a custom Python orchestrator. `LLMProvider` defines decision/report interfaces, and `OllamaLLMProvider` supplies local inference with schema-constrained JSON and one bounded repair retry. Environment configuration selects the model and context/runtime budgets. A single concurrent investigation is the default to suit the consumer CPU/RAM budget.
+FastAPI uses a custom Python orchestrator. `LLMProvider` defines decision/report interfaces. `OllamaLLMProvider` supplies local inference; `GeminiLLMProvider` calls Google's Interactions API with request storage disabled. Both use schema-constrained JSON, full local Pydantic validation, one bounded repair retry and the same agent/tool policy. Environment configuration selects the provider, model and context/runtime budgets. A single concurrent investigation is the default to suit the consumer CPU/RAM budget and bounded external usage.
 
 ## Investigation lifecycle
 
@@ -63,6 +63,7 @@ At discovery, public frontend/proxy/Redis worked while API and worker were alrea
 | FastAPI | `127.0.0.1:18000` | Container using host networking; non-root application |
 | Diagnostic gateway | `127.0.0.1:18081` | Dedicated `aiops-gateway` systemd account; root-owned installation under `/opt/aiops-gateway` |
 | Ollama | `127.0.0.1:11434` | Local container and persistent model storage |
+| Gemini | outbound HTTPS only | Optional Google-hosted reasoning; no inbound listener |
 | PostgreSQL | `127.0.0.1:15432` | Local container and persistent database volume |
 | Qdrant | `127.0.0.1:16333` | Local container and persistent vector storage |
 
@@ -70,6 +71,6 @@ The backend has neither a Docker socket mount nor root privileges. The gateway's
 
 ## Evaluation and current limits
 
-`python -m evals.run` injects a deterministic provider and mock gateway into the production `Agent` for eight synthetic incidents. This is labeled an orchestration/safety regression. `--provider ollama` measures actual local-model decisions against the same fixture ground truth. JSON reports persist scenarios, decisions, observations, rubric, timing, and aggregate scores; optional database persistence adds `EvaluationRun` records. Tests never intentionally crash production services or change host networking.
+`python -m evals.run` injects a deterministic provider and mock gateway into the production `Agent` for eight synthetic incidents. This is labeled an orchestration/safety regression. `--provider ollama` and `--provider gemini` measure actual model decisions against the same fixture ground truth. JSON reports persist scenarios, decisions, observations, rubric, timing, and aggregate scores; optional database persistence adds `EvaluationRun` records. Tests never intentionally crash production services or change host networking.
 
-Current policy allows approval-controlled start/restart operations only for the isolated `aiops-demo` container. All 22 preexisting containers remain read-only and systemd writes are disabled. Production target enablement is gated on actual local-model diagnosis validation on at least three scenarios plus explicit target/verification review. Health verification has the scope of the configured checks: it does not perform an actual test submission, inspect queue counts, independently authenticate to Atlas, verify a Tailscale connection from another peer, or inspect live rfkill state. Report these limits when they affect a diagnosis or recovery claim. A small model may select poor diagnostics despite valid JSON, so real model benchmarks and operator review remain necessary.
+Current policy allows approval-controlled start/restart operations only for the isolated `aiops-demo` container. All 22 preexisting containers remain read-only and systemd writes are disabled. Production target enablement is gated on diagnosis validation with the actually configured model on at least three scenarios plus explicit target/verification review. Health verification has the scope of the configured checks: it does not perform an actual test submission, inspect queue counts, independently authenticate to Atlas, verify a Tailscale connection from another peer, or inspect live rfkill state. Report these limits when they affect a diagnosis or recovery claim. A model may select poor diagnostics despite valid JSON, so measured benchmarks and operator review remain necessary.

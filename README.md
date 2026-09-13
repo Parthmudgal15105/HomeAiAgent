@@ -1,6 +1,6 @@
 # AI Home-Lab Operator
 
-A private, locally hosted infrastructure investigator for the Ubuntu home server. A small Ollama model chooses constrained diagnostic tools, maintains explicit hypotheses and cites current observations. PostgreSQL persists investigations; local embeddings and Qdrant retrieve runbooks and verified incident history. Changes require authenticated approval and deterministic recovery checks.
+A private infrastructure investigator for the Ubuntu home server. The reasoning provider is configurable: local Ollama remains the default, while Google Gemini is an explicit cloud opt-in. The model chooses constrained diagnostic tools, maintains explicit hypotheses and cites current observations. PostgreSQL persists investigations; local Ollama embeddings and Qdrant retrieve runbooks and verified incident history. Changes require authenticated approval and deterministic recovery checks.
 
 The server deployment is at **http://100.98.193.60:3080** over Tailscale. Use the generated operator password in the server `.env`. The approved private local handoff file `.local-access.txt` is excluded from Git. Final benchmark and acceptance results are recorded in IMPLEMENTATION.md, EVALUATION.md and MODEL_EVALUATION.md.
 
@@ -12,7 +12,7 @@ flowchart TD
   Frontend --> API[Authenticated FastAPI backend]
   API --> Controller[Incident controller and bounded agent loop]
   Controller <--> DB[(PostgreSQL: evidence, hypotheses, approvals, audit)]
-  Controller <--> LLM[Local Ollama reasoning model]
+  Controller <--> LLM[Reasoning: local Ollama or opt-in Gemini]
   Controller <--> RAG[Local embedding provider + Qdrant]
   Controller --> Tools[Schema and policy validation]
   Tools --> Gateway[Private non-root host diagnostic gateway]
@@ -24,7 +24,7 @@ flowchart TD
   Verify --> RAG
 ```
 
-The diagnostic sequence is chosen by the local model from prior results, not a fixed checklist. The backend enforces tool scope, schemas, steps, timeouts, duplicate detection, evidence ownership, approval state and verification. The model never receives a general command executor or Docker socket.
+The diagnostic sequence is chosen by the configured reasoning model from prior results, not a fixed checklist. The backend enforces tool scope, schemas, steps, timeouts, duplicate detection, evidence ownership, approval state and verification. The model never receives a general command executor or Docker socket.
 
 ## Use
 
@@ -53,7 +53,7 @@ Agent: Dispatches once, verifies dependency and application health,
        records recovery evidence, marks resolved, saves local history.
 ```
 
-The live acceptance test uses a separate `aiops-demo` container to exercise approval, rejected unsigned writes, replay prevention, recovery and local history indexing. It never stops production CodeDuel to create a test failure. The live policy currently permits approved start/restart operations only on `aiops-demo`; all 22 preexisting containers are available for read-only diagnostics. Production writes remain disabled pending genuine local-model diagnosis validation on at least three scenarios and a separate target/verification review. SSH/Docker/Tailscale/systemd restarts remain disabled. The sandbox approval test does not establish model accuracy; see the benchmark reports for measured results.
+The live acceptance test uses a separate `aiops-demo` container to exercise approval, rejected unsigned writes, replay prevention, recovery and local history indexing. It never stops production CodeDuel to create a test failure. The live policy currently permits approved start/restart operations only on `aiops-demo`; all 22 preexisting containers are available for read-only diagnostics. Production writes remain disabled pending diagnosis validation with the actually configured reasoning model on at least three scenarios and a separate target/verification review. SSH/Docker/Tailscale/systemd restarts remain disabled. The sandbox approval test does not establish model accuracy; see the benchmark reports for measured results.
 
 ## Repository
 
@@ -81,11 +81,13 @@ pnpm build
 # Backend regression and real model benchmark (from repository root)
 python -m evals.run
 python -m evals.run --provider ollama --model qwen2.5:3b
+# With GEMINI_API_KEY supplied only through the environment:
+python -m evals.run --provider gemini --model gemini-3.8-flash
 # Operate only this project's Compose namespace on the server
 docker compose ps
 docker compose logs --tail 100 backend
 ```
 
-Runbooks/history never substitute for current observations. External MongoDB Atlas is an existing CodeDuel dependency; the operator's own reasoning, embeddings, logs, history and databases run locally. No cloud model or cloud embedding API is required.
+Runbooks/history never substitute for current observations. External MongoDB Atlas is an existing CodeDuel dependency. Ollama mode keeps reasoning, embeddings, logs, history and databases local and requires no cloud model or cloud embedding API. When Gemini is selected, bounded redacted incident context, tool results, topology and retrieved guidance are sent to Google's Gemini API for reasoning; embeddings and persisted application data remain local. See SECURITY.md before enabling the cloud provider.
 
 Read SERVER_INVENTORY.md for discovered services and the preexisting transient CodeDuel Atlas failure, ARCHITECTURE.md for design decisions, SECURITY.md for boundaries and limitations, and IMPLEMENTATION.md for verified progress and remaining work.

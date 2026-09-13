@@ -6,6 +6,7 @@ Run from the repository root after installing `backend/requirements-dev.txt`:
 python -m pytest -q evals/test_scenarios.py
 python -m evals.run
 python -m evals.run --provider ollama --model qwen2.5:3b
+python -m evals.run --provider gemini --model gemini-3.8-flash
 ```
 
 The default is a **scripted orchestration and safety regression**. Its provider
@@ -21,10 +22,21 @@ synthetic observations. This mode measures the model's tool selection and
 diagnosis using the same scenario ground truth. Run it on the server to measure
 actual server inference speed. It still cannot change any live infrastructure.
 
+`--provider gemini` calls the configured Google Gemini model through the
+Interactions API. It reads `GEMINI_API_KEY` from the environment, never writes
+the key to a report, and uses the same production agent with the synthetic
+gateway. Review `SECURITY.md`: bounded redacted incident context leaves the host
+in this mode, and API usage may incur cost.
+
 ```bash
 python -m evals.run --provider ollama \
   --ollama-base-url http://127.0.0.1:11434 \
   --model qwen2.5:3b --scenario redis_down \
+  --max-steps 18 --llm-timeout 180 --runtime-limit 900
+
+# GEMINI_API_KEY must already exist in the private environment.
+python -m evals.run --provider gemini \
+  --model gemini-3.8-flash --scenario redis_down \
   --max-steps 18 --llm-timeout 180 --runtime-limit 900
 ```
 
@@ -66,7 +78,7 @@ attempts. Evidence accuracy measures valid citation IDs, not full semantic
 entailment. These definitions are saved in the report so results remain
 interpretable.
 
-JSON failure rate comes from the real Ollama provider's raw request and schema
+JSON failure rate comes from the real model provider's raw request and schema
 failure counters, including its constrained retry. It is `null` in scripted
 mode. RAG retrieval recall and recovery verification are `null` in this
 diagnosis-only suite because retrieval and approved writes are disabled. They
@@ -76,4 +88,4 @@ would be misleading.
 Initial local validation on 2026-09-09: 13 tests passed; all eight scripted cases
 passed with 2.875 average tools, zero irrelevant/repeated calls, and valid
 current evidence citations in every case. This validates deterministic
-orchestration only. See an Ollama-mode report for measured model quality.
+orchestration only. See an Ollama- or Gemini-mode report for measured model quality.

@@ -18,7 +18,7 @@ import subprocess
 
 PATTERNS = {
     "private-key": re.compile(r"-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----"),
-    "provider-token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|tskey-(?:auth|api|client|oauth)-[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16})\b"),
+    "provider-token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|tskey-(?:auth|api|client|oauth)-[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_-]{40,})\b"),
     "credential-uri": re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/:@\"']+:[^\s/@\"']+@"),
     "secret-assignment": re.compile(r'''(?i)\b(?:[A-Z_]*(?:PASSWORD|API_KEY|API_TOKEN|AUTH_TOKEN|APPROVAL_SECRET|SESSION_SECRET|PRIVATE_KEY))["']?\s*[:=]\s*["']?([A-Za-z0-9_+/.=-]{24,})'''),
 }
