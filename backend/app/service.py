@@ -231,6 +231,15 @@ class IncidentService:
 
     async def verify(self, incident_id: str, action_id: str | None = None) -> dict:
         async with self._locks.setdefault(incident_id, asyncio.Lock()):
+            if action_id is None:
+                # A later operator Verify may finish an action whose process
+                # was still starting during its immediate verification.
+                with self.sessions() as session:
+                    incident = session.get(Incident, incident_id)
+                    if incident:
+                        failed = [a for a in incident.actions if a.approval_status == 'APPROVED' and a.verification_status == 'FAILED']
+                        if failed:
+                            action_id = failed[-1].id
             return await self._verify(incident_id, action_id)
 
     async def _verify(self, incident_id: str, action_id: str | None = None) -> dict:
@@ -261,13 +270,23 @@ class IncidentService:
             session.commit()
         results = []
         for check in checks:
-            try:
-                result = await asyncio.wait_for(self.gateway.execute(check.tool, check.arguments), timeout=self.settings.agent_tool_timeout_seconds)
-            except Exception as exc:
-                result = {'ok': False, 'result': {}, 'error': redact(str(exc), 1000)}
-            passed = result.get('ok') is True and matches(result.get('result', {}), check.expect)
-            observation_id = self.agent.record_observation(incident_id, check.tool, check.arguments, result, 'Administrator-configured recovery check ' + ('passed.' if passed else 'failed.'), phase='VERIFICATION')
-            results.append({'tool': check.tool, 'arguments': check.arguments, 'expect': check.expect, 'passed': passed, 'observation_id': observation_id})
+            target_key = 'container' if action and action.tool_name.endswith('_container') else 'service'
+            state_tool = 'docker_inspect' if target_key == 'container' else 'service_status'
+            exact_target = bool(action and check.tool == state_tool and check.arguments == {target_key: action.arguments[target_key]})
+            attempts = []
+            for attempt in range(7 if exact_target and not action.tool_name.startswith('stop_') else 1):
+                try:
+                    result = await asyncio.wait_for(self.gateway.execute(check.tool, check.arguments), timeout=self.settings.agent_tool_timeout_seconds)
+                except Exception as exc:
+                    result = {'ok': False, 'result': {}, 'error': redact(str(exc), 1000)}
+                passed = result.get('ok') is True and matches(result.get('result', {}), check.expect)
+                observation_id = self.agent.record_observation(incident_id, check.tool, check.arguments, result, 'Administrator-configured recovery check ' + ('passed.' if passed else 'failed.'), phase='VERIFICATION')
+                attempts.append({'passed': passed, 'observation_id': observation_id})
+                if passed:
+                    break
+                if attempt < 6 and exact_target:
+                    await asyncio.sleep(3)
+            results.append({'tool': check.tool, 'arguments': check.arguments, 'expect': check.expect, 'passed': passed, 'observation_id': observation_id, 'attempts': attempts})
         verified = bool(results) and all(result['passed'] for result in results)
         with self.sessions() as session:
             incident = session.get(Incident, incident_id)

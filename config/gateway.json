@@ -95,24 +95,35 @@
     "codeduel-frontend-1",
     "codeduel-proxy-1"
   ],
-  "write_services": ["cloudflared"],
+  "write_services": [],
   "allowed_actions": {
-    "aiops-demo": ["start_container", "restart_container", "stop_container"],
-    "codeduel-redis-1": ["start_container", "restart_container"],
-    "codeduel-api-1": ["start_container", "restart_container"],
-    "codeduel-worker-1": ["start_container", "restart_container"],
-    "codeduel-frontend-1": ["start_container", "restart_container"],
-    "codeduel-proxy-1": ["start_container", "restart_container"],
-    "cloudflared": ["start_service", "restart_service"]
+    "aiops-demo": [
+      "start_container",
+      "restart_container",
+      "stop_container"
+    ],
+    "codeduel-redis-1": [
+      "start_container",
+      "restart_container"
+    ],
+    "codeduel-api-1": [
+      "start_container",
+      "restart_container"
+    ],
+    "codeduel-worker-1": [
+      "start_container",
+      "restart_container"
+    ],
+    "codeduel-frontend-1": [
+      "start_container",
+      "restart_container"
+    ],
+    "codeduel-proxy-1": [
+      "start_container",
+      "restart_container"
+    ]
   },
-  "autonomous_actions": {
-    "codeduel-redis-1": ["start_container", "restart_container"],
-    "codeduel-api-1": ["start_container", "restart_container"],
-    "codeduel-worker-1": ["start_container", "restart_container"],
-    "codeduel-frontend-1": ["start_container", "restart_container"],
-    "codeduel-proxy-1": ["start_container", "restart_container"],
-    "cloudflared": ["start_service", "restart_service"]
-  },
+  "autonomous_actions": {},
   "writes_enabled": true,
   "command_timeout_seconds": 8,
   "max_output_bytes": 16384,

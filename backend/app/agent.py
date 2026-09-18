@@ -195,7 +195,7 @@ class Agent:
             try:
                 await asyncio.wait_for(self._run(incident_id), timeout=self.settings.agent_max_runtime_seconds)
             except Exception as exc:
-                message = 'Investigation runtime limit reached' if isinstance(exc, asyncio.TimeoutError) else str(redact(str(exc), 1500))
+                message = 'Investigation runtime limit reached' if isinstance(exc, asyncio.TimeoutError) else str(redact(str(exc), 1500)) or type(exc).__name__
                 with self.sessions() as session:
                     incident = session.get(Incident, incident_id)
                     incident.status = 'FAILED'

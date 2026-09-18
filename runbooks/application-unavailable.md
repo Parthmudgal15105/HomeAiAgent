@@ -1,7 +1,7 @@
-# Application unavailable
+# Generic application unavailable
 
 ## Symptoms
-A configured application does not load, rejects connections, or returns errors. Select its service profile to find actual URLs, containers and dependencies. Do not assume CodeDuel names apply to other workloads.
+A generic application unavailable alert means a configured application does not load, rejects connections, or returns errors. Select its service profile to find actual URLs, containers and dependencies. Do not assume CodeDuel names apply to other workloads.
 
 ## Likely causes
 An application process stopped, an upstream dependency is unavailable, a reverse proxy cannot reach its origin, or the host lacks resources or connectivity. A successful static homepage does not establish API or worker health.

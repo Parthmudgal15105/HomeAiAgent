@@ -63,6 +63,57 @@ async def test_recovery_failure_does_not_resolve(system):
 
 
 @pytest.mark.asyncio
+async def test_approved_restart_waits_for_delayed_target_health(system, monkeypatch):
+    _, sessions, gateway, agent, service, incident_id = system
+    diagnose(agent, incident_id)
+    with sessions() as session:
+        action_id = session.get(Incident, incident_id).actions[0].id
+    original = gateway.execute
+    checks = 0
+
+    async def delayed(tool, arguments, approval=None):
+        nonlocal checks
+        result = await original(tool, arguments, approval)
+        if tool == 'docker_inspect' and gateway.recovered:
+            checks += 1
+            if checks <= 2:
+                result['result'] = {'state': 'running', 'health': 'starting'}
+        return result
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(gateway, 'execute', delayed)
+    monkeypatch.setattr('backend.app.service.asyncio.sleep', no_wait)
+    action = await service.approve(action_id)
+    assert action['verification_status'] == 'PASSED'
+    assert checks == 3
+    with sessions() as session:
+        incident = session.get(Incident, incident_id)
+        assert incident.status == 'RESOLVED'
+        assert len([o for o in incident.observations if o.phase == 'VERIFICATION' and o.tool_name == 'docker_inspect']) == 3
+
+
+@pytest.mark.asyncio
+async def test_later_verify_updates_failed_action_without_replaying_write(system):
+    _, sessions, gateway, agent, service, incident_id = system
+    diagnose(agent, incident_id)
+    with sessions() as session:
+        action = session.get(Incident, incident_id).actions[0]
+        action.approval_status = 'APPROVED'
+        action.verification_status = 'FAILED'
+        action.executed_at = now()
+        action_id = action.id
+        session.commit()
+    gateway.recovered = True
+    result = await service.verify(incident_id)
+    assert result['verified'] is True
+    with sessions() as session:
+        assert session.get(Action, action_id).verification_status == 'PASSED'
+    assert not any(tool == 'restart_container' for tool, _, _ in gateway.calls)
+
+
+@pytest.mark.asyncio
 async def test_missing_topology_never_resolves(system):
     settings, sessions, gateway, agent, service, incident_id = system
     diagnose(agent, incident_id)
