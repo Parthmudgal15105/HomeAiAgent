@@ -3,9 +3,11 @@ from __future__ import annotations
 import concurrent.futures
 import http.server
 import json
+import socket
 import socketserver
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,7 +26,7 @@ AUTH = {"Authorization": "Bearer " + TOKEN}
 
 @pytest.fixture
 def config(tmp_path):
-    return GatewayConfig(containers=["codeduel-api-1", "aiops-demo"], write_containers=["aiops-demo"], services=["docker", "cloudflared", "tailscaled", "ssh"], hosts=["codeduel.online", "127.0.0.1", "localhost"], http_urls=["https://codeduel.online", "http://127.0.0.1:8085"], tcp_targets=[{"host": "127.0.0.1", "port": 8085}], writes_enabled=True, state_path=str(tmp_path / "approvals.sqlite3"))
+    return GatewayConfig(containers=["codeduel-api-1", "aiops-demo"], write_containers=["aiops-demo"], allowed_actions={"aiops-demo": ["start_container", "restart_container", "stop_container"]}, services=["docker", "cloudflared", "tailscaled", "ssh"], hosts=["codeduel.online", "127.0.0.1", "localhost"], http_urls=["https://codeduel.online", "http://127.0.0.1:8085"], tcp_targets=[{"host": "127.0.0.1", "port": 8085}], writes_enabled=True, state_path=str(tmp_path / "approvals.sqlite3"))
 
 
 @pytest.fixture
@@ -63,8 +65,8 @@ def test_container_inventory_projects_safe_fields_and_does_not_infer_absence_fro
 def test_all_required_read_tools_registered(client):
     metadata = client.get("/tools", headers=AUTH).json()["tools"]
     names = {item["name"] for item in metadata if item["risk_level"] == "READ_ONLY"}
-    assert len(names) == 19
-    assert {"dns_lookup", "ping_host", "http_check", "docker_list", "docker_inspect", "docker_logs", "service_status", "journal_logs", "network_interfaces", "route_table", "memory_usage", "disk_usage", "system_uptime", "process_list", "port_check"} <= names
+    assert len(names) == 27
+    assert {"dns_lookup", "ping_host", "http_check", "docker_list", "docker_inspect", "docker_logs", "service_status", "is_service_enabled", "journal_logs", "network_interfaces", "route_table", "default_gateway", "cpu_usage", "memory_usage", "disk_usage", "filesystem_mounts", "temperatures", "system_uptime", "process_list", "find_process", "inspect_process", "listening_ports", "port_check"} <= names
     assert not any(name in names for name in ("run_shell", "execute_bash"))
     inspect = next(item for item in metadata if item["name"] == "docker_inspect")
     assert inspect["parameters"]["properties"]["container"]["enum"] == ["codeduel-api-1", "aiops-demo"]
@@ -78,6 +80,9 @@ def test_all_required_read_tools_registered(client):
     ("docker_logs", {"container": "codeduel-api-1", "lines": "100"}),
     ("ping_host", {"hostname": "codeduel.online", "count": 100}),
     ("process_list", {"limit": 1000}),
+    ("process_list", {"sort_by": "command"}),
+    ("find_process", {"name": "python; whoami"}),
+    ("inspect_process", {"pid": -1}),
     ("docker_list", {"command": "rm -rf /"}),
     ("http_check", {"url": "https://codeduel.online", "headers": {}}),
     ("port_check", {"host": "localhost", "port": True}),
@@ -116,6 +121,21 @@ def test_unknown_tool_and_disabled_writes(config):
     assert client.post("/tools/restart_container", json={"container": "aiops-demo"}, headers=AUTH).status_code == 404
 
 
+def test_stop_and_service_write_tools_remain_approval_gated(config):
+    config.services.append("nginx")
+    config.write_services = ["nginx", "cloudflared"]
+    config.allowed_actions.update({"nginx": ["start_service", "restart_service", "stop_service"], "cloudflared": ["start_service", "restart_service"]})
+    client = TestClient(create_app(config, token=TOKEN, approval_secret=SECRET))
+    registry = {item["name"]: item for item in client.get("/tools", headers=AUTH).json()["tools"]}
+    assert {"stop_container", "start_service", "stop_service"} <= registry.keys()
+    assert registry["stop_container"]["parameters"]["properties"]["container"]["enum"] == ["aiops-demo"]
+    assert registry["stop_service"]["parameters"]["properties"]["service"]["enum"] == ["nginx"]
+    assert registry["restart_service"]["parameters"]["properties"]["service"]["enum"] == ["nginx", "cloudflared"]
+    assert client.post("/tools/stop_container", json={"container": "aiops-demo"}, headers=AUTH).status_code == 403
+    assert client.post("/tools/stop_service", json={"service": "nginx"}, headers=AUTH).status_code == 403
+    assert client.post("/tools/stop_service", json={"service": "cloudflared"}, headers=AUTH).json()["ok"] is False
+
+
 def test_request_body_limit_and_safe_validation_errors(client):
     assert client.post("/tools/docker_list", content=b" " * 8193, headers=AUTH).status_code == 413
     response = client.post("/tools/docker_logs", json={"container": "password=hide-me!"}, headers=AUTH)
@@ -125,6 +145,36 @@ def test_request_body_limit_and_safe_validation_errors(client):
 @pytest.mark.parametrize("percent,expected", [(0, "normal"), (79.99, "normal"), (80, "warning"), (89.99, "warning"), (90, "high"), (95, "high"), (95.01, "critical"), (100, "critical")])
 def test_threshold_boundaries(percent, expected):
     assert utilization_severity(percent) == expected
+
+
+def test_cpu_usage_is_structured(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    monkeypatch.setattr("diagnostic_gateway.tools.psutil.cpu_percent", lambda interval, percpu: [20.0, 40.0])
+    monkeypatch.setattr("diagnostic_gateway.tools.psutil.cpu_times_percent", lambda interval: SimpleNamespace(user=25.0, system=5.0, idle=68.0, iowait=2.0))
+    monkeypatch.setattr("diagnostic_gateway.tools.psutil.cpu_count", lambda logical=True: 2 if logical else 1)
+    monkeypatch.setattr("diagnostic_gateway.tools.psutil.getloadavg", lambda: (0.5, 0.4, 0.3))
+    result = tools.cpu_usage()
+    assert result == {"used_percent": 30.0, "per_cpu_percent": [20.0, 40.0], "cpu_count": 2, "cpu_count_physical": 1, "load_average": [0.5, 0.4, 0.3], "time_percent": {"user": 25.0, "system": 5.0, "idle": 68.0, "iowait": 2.0}, "severity": "normal"}
+
+
+def test_listening_ports_returns_only_listeners(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    rows = [
+        SimpleNamespace(status="LISTEN", laddr=("0.0.0.0", 8080), type=socket.SOCK_STREAM, family=socket.AF_INET, pid=42),
+        SimpleNamespace(status="ESTABLISHED", laddr=("127.0.0.1", 40000), type=socket.SOCK_STREAM, family=socket.AF_INET, pid=43),
+    ]
+    monkeypatch.setattr("diagnostic_gateway.tools.psutil.net_connections", lambda kind: rows)
+    result = tools.listening_ports()
+    assert result["total_listeners"] == 1
+    assert result["listeners"] == [{"protocol": "tcp", "family": "IPv4", "address": "0.0.0.0", "port": 8080, "all_interfaces": True, "pid": 42}]
+
+
+def test_service_enablement_and_default_route_are_structured(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    monkeypatch.setattr(tools, "service_status", lambda service: {"properties": {"UnitFileState": "enabled"}})
+    assert tools.is_service_enabled("docker")["enabled"] is True
+    monkeypatch.setattr(tools, "route_table", lambda: {"routes": [{"family": "4", "dst": "default", "gateway": "192.0.2.1", "dev": "eth0"}, {"family": "4", "dst": "192.0.2.0/24"}]})
+    assert tools.default_gateway()["routes"] == [{"family": "4", "gateway": "192.0.2.1", "interface": "eth0", "metric": None}]
 
 
 def test_secret_redaction_recurses_and_removes_common_credentials():
@@ -396,9 +446,35 @@ def test_config_rejects_unsafe_scopes():
 def test_host_resource_tools_are_structured(config):
     tools = DiagnosticTools(config)
     assert tools.memory_usage()["total_bytes"] > 0
-    assert tools.disk_usage()["used_percent"] >= 0
+    disk = tools.disk_usage()
+    assert disk["used_percent"] >= 0
+    assert disk["inodes"]["total"] >= disk["inodes"]["used"]
     assert tools.system_uptime()["uptime_seconds"] > 0
     assert isinstance(tools.network_interfaces()["interfaces"], list)
     processes = tools.process_list(3)
     assert len(processes["processes"]) <= 3
     assert "arguments_omitted" in processes
+
+
+def test_exact_action_policy_controls_metadata_and_execution(config):
+    config.allowed_actions = {"aiops-demo": ["start_container"]}
+    config.autonomous_actions = {"aiops-demo": ["start_container"]}
+    tools = DiagnosticTools(config)
+    metadata = {item["name"]: item for item in tools.metadata()}
+    assert metadata["start_container"]["parameters"]["properties"]["container"]["enum"] == ["aiops-demo"]
+    assert metadata["start_container"]["autonomous_targets"] == ["aiops-demo"]
+    assert metadata["restart_container"]["parameters"]["properties"]["container"]["enum"] == []
+    with pytest.raises(ToolError, match="allowlisted"):
+        tools.validate_scope("restart_container", {"container": "aiops-demo"})
+    with pytest.raises(ToolError, match="allowlisted"):
+        tools.validate_scope("start_container", {"container": "codeduel-api-1"})
+    config.allowed_actions = {}
+    with pytest.raises(ToolError, match="allowlisted"):
+        DiagnosticTools(config).validate_scope("start_container", {"container": "aiops-demo"})
+
+
+def test_action_policy_rejects_protected_and_unconfigured_grants():
+    with pytest.raises(ValidationError):
+        GatewayConfig(services=["cloudflared"], write_services=["cloudflared"], allowed_actions={"cloudflared": ["stop_service"]})
+    with pytest.raises(ValidationError):
+        GatewayConfig(containers=["demo"], write_containers=["demo"], allowed_actions={"demo": ["start_container"]}, autonomous_actions={"demo": ["stop_container"]})

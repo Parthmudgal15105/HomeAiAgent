@@ -44,6 +44,15 @@ def summarize_observation(tool: str, arguments: dict, envelope: dict) -> str:
         return f"{host} resolved to {', '.join(map(str, result.get('addresses', [])[:5]))}." if result.get('resolved') else f'{host} did not resolve.'
     if tool == 'port_check':
         return f"TCP {arguments.get('host', '?')}:{arguments.get('port', '?')} is {'open' if result.get('open') else 'unreachable'} from the host."
+    if tool == 'check_application_health':
+        components = result.get('components', [])
+        failing = [item.get('name', item.get('id', '?')) for item in components if item.get('status') == 'UNHEALTHY']
+        unknown = [item.get('name', item.get('id', '?')) for item in components if item.get('status') == 'UNKNOWN']
+        return f"{arguments.get('application', 'Application')} configured health: {result.get('status', 'UNKNOWN')}. Unhealthy: {', '.join(failing[:8]) or 'none'}; unknown: {', '.join(unknown[:8]) or 'none'}."
+    if tool == 'cpu_usage':
+        return f"CPU sampled utilization: {result.get('used_percent', '?')}%; one-minute load: {(result.get('load_average') or ['?'])[0]}."
+    if tool == 'listening_ports':
+        return f"{result.get('total_listeners', '?')} listening TCP ports observed; {len(result.get('listeners', []))} returned."
     if tool == 'ping_host':
         return f"{arguments.get('hostname', arguments.get('host', 'Configured host'))}: ICMP {'reply received' if result.get('reachable') else 'no reply'}; packet loss {result.get('packet_loss_percent', '?')}%. ICMP blocking is possible."
     if tool == 'network_interfaces':

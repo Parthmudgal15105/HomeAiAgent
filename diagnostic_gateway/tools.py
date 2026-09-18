@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import socket
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import psutil
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,6 +60,15 @@ class DiskArguments(Arguments):
 
 class ProcessArguments(Arguments):
     limit: int = Field(default=20, ge=1, le=100)
+    sort_by: Literal["memory", "cpu"] = "memory"
+
+
+class ProcessNameArguments(Arguments):
+    name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
+
+
+class PIDArguments(Arguments):
+    pid: int = Field(ge=1)
 
 
 class PortArguments(Arguments):
@@ -80,6 +90,9 @@ class ToolDefinition:
 
 
 class DiagnosticTools:
+    protected_service_writes = frozenset({"docker", "ssh", "sshd", "tailscaled"})
+    protected_service_stops = protected_service_writes | {"cloudflared"}
+
     def __init__(self, config: GatewayConfig) -> None:
         self.config = config
         self.definitions: dict[str, ToolDefinition] = {}
@@ -91,13 +104,21 @@ class DiagnosticTools:
             ("docker_inspect", "Read a container's state, image, restart count, ports and networks; environment and command are omitted.", ContainerArguments),
             ("docker_logs", "Read bounded recent container logs, with secrets redacted.", ContainerLogsArguments),
             ("service_status", "Read selected systemd unit state properties without journal secrets.", ServiceArguments),
+            ("is_service_enabled", "Read whether an allowlisted systemd unit is enabled at boot.", ServiceArguments),
             ("journal_logs", "Read bounded recent journal entries for an allowlisted systemd unit.", JournalArguments),
             ("network_interfaces", "Read host network interface state and IP addresses.", NoArguments),
             ("route_table", "Read structured IPv4 and IPv6 routes.", NoArguments),
+            ("default_gateway", "Read structured IPv4 and IPv6 default routes.", NoArguments),
+            ("cpu_usage", "Sample host CPU utilization and CPU time percentages.", NoArguments),
             ("memory_usage", "Read normalized host RAM and swap usage with deterministic severity.", NoArguments),
             ("disk_usage", "Read filesystem capacity for a configured path with deterministic severity.", DiskArguments),
+            ("filesystem_mounts", "List mounted filesystems and their capacity without exposing device sources.", NoArguments),
+            ("temperatures", "Read hardware temperature sensors when the host exposes them.", NoArguments),
             ("system_uptime", "Read uptime, boot time, CPU load and available CPU count.", NoArguments),
-            ("process_list", "Read bounded process names and memory use; command arguments and environment are omitted.", ProcessArguments),
+            ("process_list", "Read bounded process names ordered by memory or sampled CPU use; command arguments and environment are omitted.", ProcessArguments),
+            ("find_process", "Find processes by exact executable name, without command arguments or environment.", ProcessNameArguments),
+            ("inspect_process", "Read one process's safe status and resource fields by PID, without command arguments or environment.", PIDArguments),
+            ("listening_ports", "List structured host TCP listeners; process arguments and environment are omitted.", NoArguments),
             ("port_check", "Attempt a TCP connection to one explicitly configured host/port pair.", PortArguments),
             ("tailscale_status", "Read structured Tailscale health and connection state, without node keys.", NoArguments),
             ("cloudflared_status", "Read the allowlisted Cloudflare Tunnel systemd state.", NoArguments),
@@ -108,10 +129,13 @@ class DiagnosticTools:
             self.definitions[name] = ToolDefinition(name, description, arguments, getattr(self, name))
         if config.writes_enabled:
             if config.write_containers:
-                self.definitions["restart_container"] = ToolDefinition("restart_container", "Restart an approved container; causes brief interruption. Requires a fresh signed human approval.", ContainerArguments, self.restart_container, "LOW_RISK_WRITE")
-                self.definitions["start_container"] = ToolDefinition("start_container", "Start an approved stopped container. Requires a fresh signed human approval.", ContainerArguments, self.start_container, "LOW_RISK_WRITE")
+                self.definitions["restart_container"] = ToolDefinition("restart_container", "Restart an allowlisted unhealthy container; requires a fresh signed authorized action.", ContainerArguments, self.restart_container, "LOW_RISK_WRITE")
+                self.definitions["start_container"] = ToolDefinition("start_container", "Start an allowlisted stopped container; requires a fresh signed authorized action.", ContainerArguments, self.start_container, "LOW_RISK_WRITE")
+                self.definitions["stop_container"] = ToolDefinition("stop_container", "Stop an allowlisted container; operator approval only, never autonomous recovery.", ContainerArguments, self.stop_container, "LOW_RISK_WRITE")
             if config.write_services:
-                self.definitions["restart_service"] = ToolDefinition("restart_service", "Restart an approved service using host policy; requires a fresh signed human approval.", ServiceArguments, self.restart_service, "LOW_RISK_WRITE")
+                self.definitions["restart_service"] = ToolDefinition("restart_service", "Restart an allowlisted service using host policy; requires a fresh signed authorized action.", ServiceArguments, self.restart_service, "LOW_RISK_WRITE")
+                self.definitions["start_service"] = ToolDefinition("start_service", "Start an allowlisted service using host policy; requires a fresh signed authorized action.", ServiceArguments, self.start_service, "LOW_RISK_WRITE")
+                self.definitions["stop_service"] = ToolDefinition("stop_service", "Stop an allowlisted service; operator approval only, never autonomous recovery.", ServiceArguments, self.stop_service, "LOW_RISK_WRITE")
 
     def metadata(self) -> list[dict[str, Any]]:
         tools = []
@@ -122,16 +146,24 @@ class DiagnosticTools:
                 if key in properties:
                     properties[key]["enum"] = self.config.hosts
             if "container" in properties:
-                properties["container"]["enum"] = self.config.write_containers if definition.risk_level != "READ_ONLY" else self.config.containers
+                properties["container"]["enum"] = self.action_targets(definition.name) if definition.risk_level != "READ_ONLY" else self.config.containers
             if "service" in properties:
-                properties["service"]["enum"] = self.config.write_services if definition.risk_level != "READ_ONLY" else self.config.services
+                if definition.risk_level == "READ_ONLY":
+                    properties["service"]["enum"] = self.config.services
+                else:
+                    blocked = self.protected_service_stops if definition.name == "stop_service" else self.protected_service_writes
+                    properties["service"]["enum"] = [name for name in self.action_targets(definition.name) if name not in blocked]
             if "url" in properties:
                 properties["url"]["enum"] = self.config.http_urls + list(self.config.container_http)
             if "path" in properties:
                 properties["path"]["enum"] = self.config.disk_paths
             if definition.name == "port_check":
                 schema["anyOf"] = [{"properties": {"host": {"const": item.host}, "port": {"const": item.port}}} for item in self.config.tcp_targets] or [{"not": {}}]
-            tools.append({"name": definition.name, "description": definition.description, "risk_level": definition.risk_level, "parameters": schema})
+            entry = {"name": definition.name, "description": definition.description, "risk_level": definition.risk_level, "parameters": schema}
+            if definition.risk_level != "READ_ONLY":
+                entry["autonomous_targets"] = [target for target in self.action_targets(definition.name)
+                                                if definition.name in self.config.autonomous_actions.get(target, [])]
+            tools.append(entry)
         return tools
 
     def command(self, argv: list[str], **kwargs: Any) -> Any:
@@ -142,16 +174,24 @@ class DiagnosticTools:
         if value not in allowed:
             raise ToolError(f"{category} is not allowlisted")
 
+    def action_targets(self, tool: str) -> list[str]:
+        targets = self.config.write_containers if tool.endswith("_container") else self.config.write_services
+        return [target for target in targets if tool in self.config.allowed_actions.get(target, [])]
+
     def validate_scope(self, tool: str, arguments: dict[str, Any]) -> None:
         """Validate before consuming approval or invoking any command."""
         if "hostname" in arguments:
             self.require(arguments["hostname"], self.config.hosts, "Host")
         if "container" in arguments:
-            targets = self.config.write_containers if tool in ("restart_container", "start_container") else self.config.containers
+            targets = self.action_targets(tool) if tool in ("restart_container", "start_container", "stop_container") else self.config.containers
             self.require(arguments["container"], targets, "Container")
         if "service" in arguments:
-            targets = self.config.write_services if tool == "restart_service" else self.config.services
+            targets = self.action_targets(tool) if tool in ("restart_service", "start_service", "stop_service") else self.config.services
             self.require(arguments["service"], targets, "Service")
+            if tool in ("restart_service", "start_service", "stop_service"):
+                blocked = self.protected_service_stops if tool == "stop_service" else self.protected_service_writes
+                if arguments["service"] in blocked:
+                    raise ToolError("Service write is prohibited for a protected host capability")
         if "url" in arguments:
             self.require(arguments["url"], self.config.http_urls + list(self.config.container_http), "HTTP URL")
         if "path" in arguments:
@@ -246,6 +286,13 @@ class DiagnosticTools:
         values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
         return {"service": service, "state": values.get("ActiveState", "unknown"), "substate": values.get("SubState"), "loaded": values.get("LoadState") == "loaded", "properties": values}
 
+    def is_service_enabled(self, service: str) -> dict[str, Any]:
+        state = self.service_status(service)
+        unit_file_state = state["properties"].get("UnitFileState", "unknown")
+        return {"service": service, "unit_file_state": unit_file_state,
+                "enabled": unit_file_state in ("enabled", "enabled-runtime", "linked", "linked-runtime"),
+                "note": "Static or generated units may be active without an enablement state."}
+
     def journal_logs(self, service: str, lines: int = 100) -> dict[str, Any]:
         self.require(service, self.config.services, "Service")
         result = self.command(["journalctl", "--unit", service, "--lines", str(lines), "--no-pager", "--output", "json", "--output-fields", "__REALTIME_TIMESTAMP,PRIORITY,MESSAGE,_SYSTEMD_UNIT"])
@@ -272,14 +319,81 @@ class DiagnosticTools:
             routes.extend({"family": family[1:], **route} for route in json.loads(result.stdout))
         return {"routes": routes[:250]}
 
+    def default_gateway(self) -> dict[str, Any]:
+        routes = self.route_table()["routes"]
+        defaults = [{"family": route.get("family"), "gateway": route.get("gateway"),
+                     "interface": route.get("dev"), "metric": route.get("metric")}
+                    for route in routes if route.get("dst") in ("default", "0.0.0.0/0", "::/0")]
+        return {"routes": defaults, "available": bool(defaults)}
+
     def memory_usage(self) -> dict[str, Any]:
         ram, swap = psutil.virtual_memory(), psutil.swap_memory()
         return {"total_bytes": ram.total, "available_bytes": ram.available, "used_bytes": ram.total - ram.available, "used_percent": ram.percent, "severity": utilization_severity(ram.percent), "swap": {"total_bytes": swap.total, "used_bytes": swap.used, "used_percent": swap.percent}}
 
+    def cpu_usage(self) -> dict[str, Any]:
+        per_cpu = [round(value, 1) for value in psutil.cpu_percent(interval=0.1, percpu=True)]
+        overall = round(sum(per_cpu) / len(per_cpu), 1) if per_cpu else 0.0
+        times = psutil.cpu_times_percent(interval=None)
+        return {
+            "used_percent": overall,
+            "per_cpu_percent": per_cpu,
+            "cpu_count": psutil.cpu_count(),
+            "cpu_count_physical": psutil.cpu_count(logical=False),
+            "load_average": list(psutil.getloadavg()),
+            "time_percent": {
+                key: round(float(getattr(times, key)), 1)
+                for key in ("user", "system", "idle", "iowait")
+                if hasattr(times, key)
+            },
+            "severity": utilization_severity(overall),
+        }
+
     def disk_usage(self, path: str = "/") -> dict[str, Any]:
         self.require(path, self.config.disk_paths, "Filesystem path")
         disk = psutil.disk_usage(path)
-        return {"path": path, "total_bytes": disk.total, "used_bytes": disk.used, "free_bytes": disk.free, "used_percent": disk.percent, "severity": utilization_severity(disk.percent)}
+        filesystem = os.statvfs(path)
+        inode_total = filesystem.f_files
+        inode_free = filesystem.f_ffree
+        inode_used = max(0, inode_total - inode_free)
+        inode_percent = round((inode_used / inode_total) * 100, 1) if inode_total else None
+        return {
+            "path": path,
+            "total_bytes": disk.total,
+            "used_bytes": disk.used,
+            "free_bytes": disk.free,
+            "used_percent": disk.percent,
+            "severity": utilization_severity(disk.percent),
+            "inodes": {
+                "total": inode_total,
+                "used": inode_used,
+                "free": inode_free,
+                "used_percent": inode_percent,
+                "severity": utilization_severity(inode_percent) if inode_percent is not None else "unknown",
+            },
+        }
+
+    def filesystem_mounts(self) -> dict[str, Any]:
+        mounts = []
+        for item in psutil.disk_partitions(all=False)[:100]:
+            try:
+                usage = psutil.disk_usage(item.mountpoint)
+            except (OSError, PermissionError):
+                usage = None
+            mounts.append({"path": item.mountpoint, "filesystem": item.fstype,
+                           "used_percent": usage.percent if usage else None,
+                           "total_bytes": usage.total if usage else None,
+                           "available": usage is not None})
+        return {"mounts": mounts, "device_sources_omitted": True}
+
+    def temperatures(self) -> dict[str, Any]:
+        try:
+            sensors = psutil.sensors_temperatures(fahrenheit=False)
+        except (AttributeError, OSError):
+            sensors = {}
+        readings = [{"sensor": group, "label": item.label or None, "current_c": item.current,
+                     "high_c": item.high, "critical_c": item.critical}
+                    for group, values in sensors.items() for item in values]
+        return {"available": bool(readings), "readings": readings[:100], "truncated": len(readings) > 100}
 
     def system_uptime(self) -> dict[str, Any]:
         boot = psutil.boot_time()
@@ -289,16 +403,75 @@ class DiagnosticTools:
             uptime = max(0, time.time() - boot)
         return {"uptime_seconds": round(uptime, 1), "boot_timestamp": boot, "load_average": list(psutil.getloadavg()), "cpu_count": psutil.cpu_count(), "cpu_count_physical": psutil.cpu_count(logical=False)}
 
-    def process_list(self, limit: int = 20) -> dict[str, Any]:
+    def process_list(self, limit: int = 20, sort_by: str = "memory") -> dict[str, Any]:
+        if sort_by not in ("memory", "cpu"):
+            raise ToolError("Unsupported process sort order")
         processes = []
+        if sort_by == "cpu":
+            for process in psutil.process_iter():
+                try:
+                    process.cpu_percent(interval=None)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            time.sleep(0.1)
         for process in psutil.process_iter(["pid", "name", "status", "memory_percent", "username"]):
             try:
                 values = process.info
-                processes.append({"pid": values["pid"], "name": values["name"], "status": values["status"], "memory_percent": round(values.get("memory_percent") or 0, 3), "user": values.get("username")})
+                processes.append({"pid": values["pid"], "name": values["name"], "status": values["status"], "memory_percent": round(values.get("memory_percent") or 0, 3),
+                                  "cpu_percent": round(process.cpu_percent(interval=None), 1) if sort_by == "cpu" else None,
+                                  "user": values.get("username")})
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        processes.sort(key=lambda item: item["memory_percent"], reverse=True)
-        return {"processes": processes[:limit], "total_processes_seen": len(processes), "arguments_omitted": True}
+        processes.sort(key=lambda item: item["cpu_percent"] or 0 if sort_by == "cpu" else item["memory_percent"], reverse=True)
+        return {"processes": processes[:limit], "total_processes_seen": len(processes), "sort_by": sort_by, "arguments_omitted": True}
+
+    def find_process(self, name: str) -> dict[str, Any]:
+        processes = []
+        for process in psutil.process_iter(["pid", "name", "status", "memory_percent"]):
+            try:
+                if process.info["name"] == name:
+                    processes.append({"pid": process.info["pid"], "name": name, "status": process.info["status"],
+                                      "memory_percent": round(process.info.get("memory_percent") or 0, 3)})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return {"name": name, "processes": processes[:50], "total_matches": len(processes), "arguments_omitted": True}
+
+    def inspect_process(self, pid: int) -> dict[str, Any]:
+        try:
+            process = psutil.Process(pid)
+            memory = process.memory_info()
+            return {"pid": pid, "name": process.name(), "status": process.status(),
+                    "memory_rss_bytes": memory.rss, "memory_percent": round(process.memory_percent(), 3),
+                    "created_at": process.create_time(), "arguments_omitted": True}
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+            raise ToolError("Process is unavailable for inspection") from exc
+
+    def listening_ports(self) -> dict[str, Any]:
+        try:
+            connections = psutil.net_connections(kind="inet")
+        except (psutil.AccessDenied, PermissionError) as exc:
+            raise ToolError("Listening port inspection is unavailable to the gateway account") from exc
+        listeners = []
+        for connection in connections:
+            if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+                continue
+            address = connection.laddr.ip if hasattr(connection.laddr, "ip") else connection.laddr[0]
+            port = connection.laddr.port if hasattr(connection.laddr, "port") else connection.laddr[1]
+            listeners.append({
+                "protocol": "tcp" if connection.type == socket.SOCK_STREAM else "udp",
+                "family": "IPv6" if connection.family == socket.AF_INET6 else "IPv4",
+                "address": address,
+                "port": port,
+                "all_interfaces": address in ("0.0.0.0", "::"),
+                "pid": connection.pid,
+            })
+        listeners.sort(key=lambda item: (item["port"], item["protocol"], item["address"]))
+        return {
+            "listeners": listeners[:256],
+            "total_listeners": len(listeners),
+            "truncated": len(listeners) > 256,
+            "process_arguments_omitted": True,
+        }
 
     def port_check(self, host: str, port: int) -> dict[str, Any]:
         self.validate_scope("port_check", {"host": host, "port": port})
@@ -372,9 +545,24 @@ class DiagnosticTools:
         self.command(["docker", "container", "start", "--", container], timeout=15)
         return {"operation": "start_container", "container": container, "execution_succeeded": True, "state": self.docker_inspect(container), "verification_required": True}
 
+    def stop_container(self, container: str) -> dict[str, Any]:
+        self.require(container, self.config.write_containers, "Write container")
+        self.command(["docker", "container", "stop", "--time", "5", "--", container], timeout=20)
+        return {"operation": "stop_container", "container": container, "execution_succeeded": True, "state": self.docker_inspect(container), "verification_required": True}
+
     def restart_service(self, service: str) -> dict[str, Any]:
         self.require(service, self.config.write_services, "Write service")
         # No sudo. A separately reviewed host policy must grant this exact unit;
         # absent such a policy systemd denies the request without prompting.
         self.command(["systemctl", "--no-ask-password", "restart", "--", service], timeout=20)
         return {"operation": "restart_service", "service": service, "execution_succeeded": True, "state": self.service_status(service), "verification_required": True}
+
+    def start_service(self, service: str) -> dict[str, Any]:
+        self.require(service, self.config.write_services, "Write service")
+        self.command(["systemctl", "--no-ask-password", "start", "--", service], timeout=20)
+        return {"operation": "start_service", "service": service, "execution_succeeded": True, "state": self.service_status(service), "verification_required": True}
+
+    def stop_service(self, service: str) -> dict[str, Any]:
+        self.require(service, self.config.write_services, "Write service")
+        self.command(["systemctl", "--no-ask-password", "stop", "--", service], timeout=20)
+        return {"operation": "stop_service", "service": service, "execution_succeeded": True, "state": self.service_status(service), "verification_required": True}

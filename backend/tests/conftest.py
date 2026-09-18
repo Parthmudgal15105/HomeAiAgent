@@ -19,6 +19,7 @@ REGISTRY = {
         ('http_check', 'READ_ONLY', {'url': {'type': 'string', 'enum': ['http://127.0.0.1:9999/health']}}),
         ('restart_container', 'LOW_RISK_WRITE', {'container': {'type': 'string', 'enum': ['sandbox']}}),
         ('start_container', 'LOW_RISK_WRITE', {'container': {'type': 'string', 'enum': ['sandbox']}}),
+        ('stop_container', 'LOW_RISK_WRITE', {'container': {'type': 'string', 'enum': ['sandbox']}}),
     ]
 }
 
@@ -55,7 +56,7 @@ class StopProvider:
 def system(tmp_path):
     topology = tmp_path / 'topology.json'
     topology.write_text(json.dumps({'services': {'codeduel': {'depends_on': ['sandbox'], 'health_checks': [{'tool': 'http_check', 'arguments': {'url': 'http://127.0.0.1:9999/health'}, 'expect': {'status_code': 200, 'reachable': True}}]}, 'sandbox': {'health_checks': [{'tool': 'docker_inspect', 'arguments': {'container': 'sandbox'}, 'expect': {'state': 'running', 'health': 'healthy'}}]}}}))
-    settings = Settings(_env_file=None, database_url='sqlite:///:memory:', topology_path=str(topology), rag_enabled=False, aiops_api_token='test-operator-token', enable_write_actions=True, gateway_approval_secret='test-signing-secret')
+    settings = Settings(_env_file=None, database_url='sqlite:///:memory:', topology_path=str(topology), rag_enabled=False, aiops_api_token='test-operator-token', enable_write_actions=True, enable_autonomous_actions=False, gateway_approval_secret='test-signing-secret')
     engine, sessions = make_database(settings.database_url)
     Base.metadata.create_all(engine)
     gateway = FakeGateway()

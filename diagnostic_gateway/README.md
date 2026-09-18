@@ -58,17 +58,28 @@ secrets, so all diagnostic storage and inference remain local. Commands use
 fixed binary names, argument arrays, a sanitized environment, bounded output
 and hard timeouts; no arbitrary shell or command tool exists.
 
-The reusable gateway example defaults writes off. The current installed policy
-sets `writes_enabled:true`, `write_containers:["aiops-demo"]`, and
-`write_services:[]`; all preexisting containers remain read-only. Production
-writes require actual local-model validation and a reviewed scope change as
-described in SECURITY.md. Write target lists must remain subsets of diagnostic
+The read-only registry includes exact HTTP/HTTPS, DNS, ICMP and configured TCP
+checks; Docker and systemd inspection/enablement; CPU, memory, swap, disk,
+inode, uptime and load measurements; mounts, optional temperatures, structured
+network interfaces, default routes and listening TCP ports; bounded process
+summaries, exact-name search and PID inspection; Tailscale state; and allowlisted
+Docker statistics and events. Process results omit command arguments and
+environment. CPU utilization is a short sample rather than a historical average.
+
+The reusable gateway example defaults writes off. The checked-in deployment
+policy now includes the five recorded CodeDuel containers, `aiops-demo`, and
+`cloudflared` as exact write targets. This policy has not been deployed or
+freshly verified on the host; the prior live deployment was tested only with
+demo start/restart. Backend autonomous policy permits only evidence-gated
+start/restart, while stop remains operator-approved. Write target lists must remain subsets of diagnostic
 allowlists. No high-risk operations exist. Service writes call
 `systemctl --no-ask-password` without sudo and will be denied unless a separately
-reviewed host authorization policy permits the exact service. Do not grant
+reviewed host authorization policy permits the exact service. The deployment
+includes a cloudflared-only start/restart polkit rule, not yet host-verified. Do not grant
 unrestricted sudo or general systemd management.
 
-Each write requires a persisted human approval in the backend and these headers:
+Each write requires a persisted backend authorization (autonomous policy or
+authenticated operator approval) and these headers:
 
 ```
 X-Action-ID: <unique action id, 8–128 letters/digits/_/->
@@ -84,10 +95,10 @@ action_id + ':' + tool + ':' + json.dumps(arguments, sort_keys=True, separators=
 
 The gateway records action consumption transactionally in SQLite **before**
 execution. Replay is rejected across process restarts; failed or uncertain
-operations require a new approval, never automatic retry. The HMAC authorizes
+operations require a new authorization, never automatic retry. The HMAC authorizes
 the exact tool, arguments, action and expiry; the model never receives the
 secret. A compromised backend remains capable of signing writes, so backend
-approval authorization/persistence is part of the trust boundary too. Successful
+authorization/persistence is part of the trust boundary too. Successful
 execution returns `verification_required:true` and does not claim recovery.
 
 Test from the repository root:

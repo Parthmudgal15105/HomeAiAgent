@@ -1,6 +1,6 @@
 # Local AI Home-Lab Operator architecture
 
-The application investigates infrastructure incidents with a configurable reasoning model that chooses constrained diagnostics. Ollama is the private local default; Gemini is an explicit cloud option. PostgreSQL persists observations, hypotheses, proposed actions, and evidence-backed reports. A separate host gateway executes the approved diagnostic vocabulary. The model has no shell tool.
+The application investigates infrastructure incidents with a configurable reasoning model that chooses constrained diagnostics and selected recovery actions. Ollama is the private local default; Gemini is an explicit cloud option. PostgreSQL persists observations, hypotheses, actions, and evidence-backed reports. A separate host gateway executes the authorized capability vocabulary. The model has no shell tool. This autonomous expansion is local source only until deployed and verified.
 
 This document describes the implementation and configured deployment. Live validation and measured model results belong in `IMPLEMENTATION.md`, `DEPLOYMENT.md`, and `MODEL_EVALUATION.md`; a diagram or configured health check is not proof that a service is running.
 
@@ -21,7 +21,9 @@ flowchart TD
     Gateway --> Docker[Host Docker: allowlisted CodeDuel containers]
     Gateway --> Systemd[Allowlisted systemd diagnostics]
     Gateway --> Targets[Configured HTTP DNS and TCP targets]
-    API --> Approval[Persisted operator approval]
+    API --> Policy[Evidence + topology + retry policy]
+    Policy --> Gateway
+    API --> Approval[Optional direct-operation approval]
     Approval --> Gateway
     Gateway --> Verify[Configured read-only recovery checks]
     Verify --> PG
@@ -35,11 +37,11 @@ FastAPI uses a custom Python orchestrator. `LLMProvider` defines decision/report
 
 An incident begins `OPEN`. Starting an investigation claims it and sets `INVESTIGATING`. The agent retrieves optional local context, asks the model for the next structured decision, validates the tool/arguments, calls the gateway, and records the result before asking for another decision. Each decision can update explicit hypotheses and supporting or contradicting observation links. Tool selection depends on the accumulated evidence; production orchestration does not follow the scripted evaluation plans.
 
-The loop limits decisions, total runtime, model time, tool time, context size, and identical tool/argument repeats. Unknown tools and state changes presented as automatic diagnostic calls are rejected. Rejected decisions generate bounded feedback; repeated policy failures stop the investigation. A transport/permission failure is stored as a failed diagnostic and does not establish target failure by itself.
+The loop limits decisions, total runtime, model time, tool time, context size, and identical tool/argument repeats. Unknown tools and writes presented as read-only diagnostic calls are rejected. An `EXECUTE_ACTION` decision can initiate a configured start/restart only after exact-target current evidence, topology membership, a one-attempt-per-target rule, action budget and verification-plan validation. Rejected decisions generate bounded feedback; repeated policy failures stop the investigation. A transport/permission failure is stored as a failed diagnostic and does not establish target failure by itself.
 
 A diagnosis must cite existing observations from the same incident and include at least one successful diagnostic. Confidence is capped according to the number of distinct successful tools, with a maximum of 95%. It remains a model estimate, not an empirically calibrated probability. Citation validation checks ownership and successful execution; it does not prove every causal interpretation is correct.
 
-A diagnosed incident remains open until recovery is verified. Enabled, valid remediation proposals create `WAITING_FOR_APPROVAL` actions. The operator approves an exact action before dispatch. Recovery runs administrator-configured checks from the affected service and its dependencies; every check must match before status becomes `RESOLVED`. Unsupported verification remains blocked/open. Interrupted investigations are marked failed on backend startup, and uncertain writes are never replayed automatically.
+A diagnosed incident remains open until recovery is verified. Autonomous actions are durably recorded as `AUTO_AUTHORIZED`, signed for one-use gateway dispatch, and verified against the exact target before reasoning continues. A final administrator-configured service/dependency verification is required for `RESOLVED`. Direct operator proposals still create `WAITING_FOR_APPROVAL` actions. Unsupported verification remains blocked/open. Interrupted investigations are marked failed on backend startup, and uncertain writes are never replayed automatically.
 
 ## Persistence and local retrieval
 
@@ -73,4 +75,8 @@ The backend has neither a Docker socket mount nor root privileges. The gateway's
 
 `python -m evals.run` injects a deterministic provider and mock gateway into the production `Agent` for eight synthetic incidents. This is labeled an orchestration/safety regression. `--provider ollama` and `--provider gemini` measure actual model decisions against the same fixture ground truth. JSON reports persist scenarios, decisions, observations, rubric, timing, and aggregate scores; optional database persistence adds `EvaluationRun` records. Tests never intentionally crash production services or change host networking.
 
-Current policy allows approval-controlled start/restart operations only for the isolated `aiops-demo` container. All 22 preexisting containers remain read-only and systemd writes are disabled. Production target enablement is gated on diagnosis validation with the actually configured model on at least three scenarios plus explicit target/verification review. Health verification has the scope of the configured checks: it does not perform an actual test submission, inspect queue counts, independently authenticate to Atlas, verify a Tailscale connection from another peer, or inspect live rfkill state. Report these limits when they affect a diagnosis or recovery claim. A model may select poor diagnostics despite valid JSON, so measured benchmarks and operator review remain necessary.
+Checked-in gateway policy now includes the five CodeDuel containers recorded in `SERVER_INVENTORY.md`, `aiops-demo`, and `cloudflared` for start/restart. Autonomous stop is forbidden by backend policy; Docker/SSH/Tailscale unit writes are forbidden by the gateway. The deployment installer includes an exact-unit polkit rule for cloudflared start/restart, but it has not been tested on the host. No new source has been deployed in this change, because SSH authentication failed. Health verification has the scope of the configured checks: it does not perform an actual test submission, inspect queue counts, independently authenticate to Atlas, verify a Tailscale connection from another peer, or inspect live rfkill state. A model may select poor diagnostics despite valid JSON; prior qwen2.5:3b 0/8 performance and the limited Gemini smoke remain major production risks.
+
+## Exact action policy (18 September 2026 source)
+
+The installed gateway is the final authority for each `(tool, target)` pair. Its `allowed_actions` map permits an explicit signed manual action; its `autonomous_actions` subset marks a start/restart pair eligible for evidence-gated backend authorization. An absent target/action pair is denied even if the target is present in the read-only inventory. This preserves the typed frontend → authenticated backend → signed gateway → target path. Autonomous recovery remains default-off until real-model and live acceptance gates pass.

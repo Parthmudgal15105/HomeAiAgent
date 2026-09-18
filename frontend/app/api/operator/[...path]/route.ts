@@ -15,7 +15,7 @@ async function proxy(
   const { path } = await ctx.params;
   const target = path.join("/");
   const allowed =
-    /^(incidents(?:\/[a-f0-9-]+(?:\/(?:investigate|verify))?)?|actions\/[a-f0-9-]+\/(?:approve|reject)|health|overview|topology|tools|runbooks\/ingest)$/.test(
+    /^(incidents(?:\/[a-f0-9-]+(?:\/(?:investigate|verify))?)?|actions\/[a-f0-9-]+\/(?:approve|reject)|applications\/[a-zA-Z0-9_.-]+\/health|operations\/(?:propose|recent)|health|overview|topology|tools|runbooks\/ingest)$/.test(
       target,
     );
   if (!allowed)

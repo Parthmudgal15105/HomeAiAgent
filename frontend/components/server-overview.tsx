@@ -11,6 +11,14 @@ export type OverviewData = {
   services: ServiceMap;
   findings: { level: string; signal: string; message: string }[];
 };
+export type ApplicationHealth = {
+  application: string;
+  status: "HEALTHY" | "UNHEALTHY" | "UNKNOWN";
+  collected_at: string;
+  scope: string;
+  components: { id: string; name: string; status: string; checks: { tool: string; status: string; arguments: Result; result: Result; error?: string }[] }[];
+};
+export type OperationOption = { tool: string; target: string };
 function number(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -29,9 +37,13 @@ function Badge({ value }: { value: string }) {
   const style = /critical|failed|exited|unhealthy|inactive|dead/i.test(value) ? "FAILED" : /^(healthy|running|active|up)$/i.test(value) ? "RESOLVED" : "OPEN";
   return <span className={`pill ${style}`}>{value}</span>;
 }
-export function ServerOverview({ data, busy, refresh, investigate }: { data: OverviewData | null; busy: boolean; refresh: () => void; investigate: () => void }) {
+export function ServerOverview({ data, busy, refresh, investigate, applicationHealth, applicationBusy, checkApplication, operations, proposeOperation }: {
+  data: OverviewData | null; busy: boolean; refresh: () => void; investigate: () => void;
+  applicationHealth: ApplicationHealth | null; applicationBusy: boolean; checkApplication: (id: string) => void;
+  operations: OperationOption[]; proposeOperation: (application: string, tool: string, target: string) => void;
+}) {
   const get = (name: string): Result => data?.signals[name]?.ok ? data.signals[name].result || {} : {};
-  const memory = get("memory_usage"), uptime = get("system_uptime"), disk = get("disk_usage");
+  const memory = get("memory_usage"), cpu = get("cpu_usage"), uptime = get("system_uptime"), disk = get("disk_usage");
   const load = Array.isArray(uptime.load_average) ? uptime.load_average : [];
   const containers = (get("docker_list").containers || []) as Result[];
   const tailscale = get("tailscale_status");
@@ -47,9 +59,9 @@ export function ServerOverview({ data, busy, refresh, investigate }: { data: Ove
         {data.findings.length ? <ul>{data.findings.map((finding, i) => <li key={i}><strong>{finding.level}</strong>: {finding.message}</li>)}</ul> : <p>Current configured checks reported no warning or critical signals.</p>}
       </section>
       <div className="stats overview-stats">
-        <div className="stat"><small>CPU LOAD · 1 / 5 / 15 MIN</small><strong>{load.length ? load.map(value => Number(value).toFixed(2)).join(" / ") : "Unavailable"}</strong><small>{text(uptime.cpu_count)} logical CPUs · load is runnable/waiting tasks, not utilization</small></div>
+        <div className="stat"><small>CPU USED · SHORT SAMPLE</small><strong>{percent(cpu.used_percent)}</strong><small>Load 1 / 5 / 15 min: {load.length ? load.map(value => Number(value).toFixed(2)).join(" / ") : "Unavailable"} · {text(uptime.cpu_count)} logical CPUs</small></div>
         <div className="stat"><small>RAM USED</small><strong>{percent(memory.used_percent)}</strong><small>{gib(memory.available_bytes)} available of {gib(memory.total_bytes)}</small></div>
-        <div className="stat"><small>ROOT DISK USED</small><strong>{percent(disk.used_percent)}</strong><small>{gib(disk.free_bytes)} free of {gib(disk.total_bytes)}</small></div>
+        <div className="stat"><small>ROOT DISK USED</small><strong>{percent(disk.used_percent)}</strong><small>{gib(disk.free_bytes)} free of {gib(disk.total_bytes)} · Inodes {percent((disk.inodes as Result | undefined)?.used_percent)}</small></div>
         <div className="stat"><small>UPTIME</small><strong>{duration(number(uptime.uptime_seconds))}</strong><small>Since the last host boot</small></div>
       </div>
       <div className="grid">
@@ -70,6 +82,26 @@ export function ServerOverview({ data, busy, refresh, investigate }: { data: Ove
         </aside>
       </div>
       <section className="panel"><h2>Configured monitored services</h2><p className="footnote">Service membership and dependencies come from configuration. A configured service is not assumed healthy without a current check.</p><div className="service-cards">{Object.entries(data.services || {}).map(([id, profile]) => <article className="service-card" key={id}><h3>{serviceLabel(id, profile)}</h3><small>{(profile.type || "service").replaceAll("_", " ")}</small><p>{profile.description}</p>{profile.public_urls?.map(url => <p key={url}><a className="evidence-link" href={url} target="_blank" rel="noopener noreferrer">{url}</a></p>)}<p className="footnote">{profile.containers?.length || 0} containers · {profile.systemd_services?.length || 0} system services</p><p className="footnote">Dependencies: {(profile.depends_on || profile.dependencies || []).map(dep => serviceLabel(dep, data.services[dep])).join(", ") || "None configured"}</p></article>)}</div></section>
+      <section className="panel tablewrap"><h2>Service status and controls</h2><p className="footnote">Current container state is sampled by the gateway. Actions appear only for exact targets allowed by its policy and still require operator approval.</p>
+        <table><thead><tr><th>Service</th><th>Type</th><th>Status</th><th>Health</th><th>Dependencies</th><th>Last checked</th><th>Actions</th></tr></thead><tbody>
+          {containers.map((container, index) => {
+            const target = String(container.name || "");
+            const profile = Object.entries(data.services || {}).find(([, item]) => item.containers?.includes(target));
+            const state = String(container.state || "unavailable");
+            const status = String(container.status || "unknown");
+            return <tr key={target || index}><td>{target || "Unknown container"}</td><td>{profile?.[1].type || "Docker"}</td><td><Badge value={state} /></td><td><Badge value={/unhealthy/i.test(status) ? "unhealthy" : /healthy/i.test(status) ? "healthy" : "unknown"} /></td><td>{profile ? (profile[1].depends_on || profile[1].dependencies || []).join(", ") || "None" : "Not configured"}</td><td>{new Date(data.collected_at).toLocaleString()}</td><td>{operations.filter(option => option.target === target).map(option => <button key={option.tool} onClick={() => proposeOperation(profile?.[0] || "", option.tool, target)} disabled={!profile}>{option.tool.startsWith("start_") ? "Start" : "Restart"}</button>)}{profile && <button onClick={() => checkApplication(profile[0])}>Details</button>}</td></tr>;
+          })}
+        </tbody></table>
+      </section>
+      <section className="panel"><h2>Application operations</h2><p className="footnote">Investigations can autonomously start or recover configured unhealthy targets after policy checks. These direct operation buttons remain operator-approved controls.</p>
+        <div className="service-cards">{Object.entries(data.services || {}).filter(([, profile]) => Boolean(profile.health_checks?.length)).map(([id, profile]) => <article className="service-card" key={id}>
+          <h3>{serviceLabel(id, profile)}</h3><button disabled={applicationBusy} onClick={() => checkApplication(id)}>{applicationBusy && applicationHealth?.application === id ? "Checking…" : "Check health"}</button>
+          {applicationHealth?.application === id && <div aria-live="polite"><p><Badge value={applicationHealth.status} /> <small>{new Date(applicationHealth.collected_at).toLocaleString()}</small></p><p className="footnote">{applicationHealth.scope}</p>
+            {applicationHealth.components.map(component => <details key={component.id}><summary>{component.name}: {component.status}</summary><ul>{component.checks.map((check, index) => <li key={index}>{check.tool}: {check.status}{check.error ? ` — ${check.error}` : ""}<pre>{JSON.stringify(check.result, null, 2)}</pre></li>)}</ul></details>)}
+            {operations.filter(option => option.tool.endsWith("_container") ? profile.containers?.includes(option.target) : profile.systemd_services?.includes(option.target)).map(option => <button key={`${option.tool}:${option.target}`} onClick={() => proposeOperation(id, option.tool, option.target)}>Propose {option.tool.replaceAll("_", " ")} · {option.target}</button>)}
+          </div>}
+        </article>)}</div>
+      </section>
     </>}
   </>;
 }

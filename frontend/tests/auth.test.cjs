@@ -79,3 +79,19 @@ test('authenticated overview forwards only the server-side credential', async ()
   assert.equal(called, true);
   assert.equal((await response.json()).health, 'Healthy');
 });
+test('application checks and operation proposals stay behind the authenticated proxy', async () => {
+  const cookie = 'aiops_session=' + session.createSession(process.env.SESSION_SECRET);
+  const paths = [];
+  global.fetch = async (url, options) => {
+    paths.push([url, options.method]);
+    return Response.json({ status: 'HEALTHY' });
+  };
+  const health = { params: Promise.resolve({ path: ['applications', 'codeduel', 'health'] }) };
+  const proposal = { params: Promise.resolve({ path: ['operations', 'propose'] }) };
+  assert.equal((await proxy.GET(req('GET', undefined, undefined, cookie), health)).status, 200);
+  assert.equal((await proxy.POST(req('POST', undefined, { application: 'demo', tool: 'restart_container', target: 'aiops-demo' }, cookie), proposal)).status, 200);
+  assert.deepEqual(paths, [
+    ['http://127.0.0.1:18000/api/applications/codeduel/health', 'GET'],
+    ['http://127.0.0.1:18000/api/operations/propose', 'POST'],
+  ]);
+});

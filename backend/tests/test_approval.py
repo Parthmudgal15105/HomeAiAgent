@@ -131,3 +131,36 @@ def test_verifier_is_strict_about_missing_values_and_boolean_types():
     assert matches({'status': {'ready': True}}, {'status.ready': True})
     assert not matches({'status': {'ready': 1}}, {'status.ready': True})
     assert not matches({'status': {}}, {'status.ready': True})
+
+
+def test_stop_verification_checks_target_only_and_never_claims_recovery(system):
+    _, _, _, _, service, _ = system
+    from types import SimpleNamespace
+    action = SimpleNamespace(tool_name='stop_container', arguments={'container': 'sandbox'})
+    checks = service.verification_checks('codeduel', action)
+    assert len(checks) == 1
+    assert checks[0].tool == 'docker_inspect'
+    assert checks[0].expect == {'state.running': False}
+
+
+@pytest.mark.asyncio
+async def test_approved_stop_verifies_target_without_resolving_incident(system, monkeypatch):
+    _, sessions, gateway, agent, service, incident_id = system
+    diagnose(agent, incident_id)
+    action_id = agent.propose_action(incident_id, 'stop_container', {'container': 'sandbox'},
+                                     'Operator requested a controlled stop', REGISTRY)
+    async def execute(tool, arguments, approval=None):
+        gateway.calls.append((tool, arguments, approval))
+        if tool == 'stop_container':
+            assert approval and approval['approval_status'] == 'APPROVED'
+            return {'tool': tool, 'ok': True, 'result': {'verification_required': True}}
+        assert tool == 'docker_inspect'
+        return {'tool': tool, 'ok': True, 'result': {'state': {'running': False}}}
+    monkeypatch.setattr(gateway, 'execute', execute)
+    result = await service.approve(action_id)
+    assert result['verification_status'] == 'PASSED'
+    with sessions() as session:
+        incident = session.get(Incident, incident_id)
+        assert incident.status == 'OPEN'
+        assert incident.resolved_at is None
+        assert incident.agent_state['phase'] == 'OPERATION_VERIFIED'

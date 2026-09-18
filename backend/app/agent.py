@@ -31,6 +31,7 @@ class Agent:
     def __init__(self, settings: Settings, sessions, gateway, llm, rag=None):
         self.settings, self.sessions = settings, sessions
         self.gateway, self.llm, self.rag = gateway, llm, rag
+        self.service = None
         self.semaphore = asyncio.Semaphore(settings.agent_max_parallel_incidents)
 
     def audit(self, incident_id: str, event_type: str, payload: dict):
@@ -54,6 +55,7 @@ class Agent:
                 'id': o.id, 'step_number': o.step_number, 'tool_name': o.tool_name,
                 'tool_arguments': o.tool_arguments, 'result': o.normalized_result,
                 'ok': o.raw_result.get('ok', False), 'interpretation': o.interpretation,
+                **({'phase': o.phase} if o.phase == 'REMEDIATION' else {}),
             } for o in incident.observations]
             hypotheses = [{k: v for k, v in asdict(h).items() if k not in ('created_at', 'updated_at', 'incident_id')} for h in incident.hypotheses]
             context = {
@@ -67,6 +69,7 @@ class Agent:
                 'observations': observations, 'hypotheses': hypotheses,
                 'validation_feedback': feedback,
                 'remaining_steps': incident.agent_state.get('remaining_steps'),
+                'autonomous_actions_enabled': self.settings.enable_write_actions and self.settings.enable_autonomous_actions,
             }
         return compact_context(redact(context, 2000), self.settings.agent_context_chars)
 
@@ -168,7 +171,7 @@ class Agent:
             incident.agent_state = {**incident.agent_state, 'phase': 'DIAGNOSED', 'next_action': None}
             session.commit()
         action_errors = []
-        for remediation in decision.remediation:
+        for remediation in ([] if self.settings.enable_autonomous_actions else decision.remediation):
             try:
                 self.propose_action(incident_id, remediation.tool, remediation.arguments, remediation.reason, registry)
             except ValueError as exc:
@@ -247,7 +250,8 @@ class Agent:
                     self.update_state(incident_id, phase='DIAGNOSTIC', next_action={'tool': decision.tool, 'arguments': decision.arguments, 'reason': decision.reason})
                     tool_started = time.monotonic()
                     try:
-                        result = await asyncio.wait_for(self.gateway.execute(decision.tool, decision.arguments), timeout=self.settings.agent_tool_timeout_seconds)
+                        timeout = max(30, self.settings.agent_tool_timeout_seconds * 2) if decision.tool == 'check_application_health' else self.settings.agent_tool_timeout_seconds
+                        result = await asyncio.wait_for(self.gateway.execute(decision.tool, decision.arguments), timeout=timeout)
                     except Exception as exc:
                         result = {'tool': decision.tool, 'ok': False, 'result': {}, 'error': redact(str(exc), 1000)}
                     result['duration_ms'] = round((time.monotonic() - tool_started) * 1000, 1)
@@ -256,7 +260,33 @@ class Agent:
                     feedback = hypothesis_feedback
                 elif decision.decision_type == 'DIAGNOSIS':
                     self.save_diagnosis(incident_id, decision, registry)
+                    if self.settings.enable_autonomous_actions and decision.remediation and self.service:
+                        remediation = decision.remediation[0]
+                        try:
+                            await self.service.execute_autonomous(incident_id, remediation.tool, remediation.arguments,
+                                                                  remediation.reason, decision.evidence_observation_ids)
+                        except ValueError as exc:
+                            self.update_state(incident_id, remediation_not_executable=[{'tool': remediation.tool, 'message': str(exc)}])
+                            with self.sessions() as session:
+                                actions = [a for a in session.get(Incident, incident_id).actions if not a.requires_approval]
+                            await self.service.verify(incident_id, actions[-1].id if actions else None)
+                            return
+                        feedback = 'One targeted action was executed and verified. Inspect its new observations; continue diagnosis if recovery is incomplete.'
+                        calls.clear()  # A write makes a repeated diagnostic meaningful.
+                        continue
+                    if self.settings.enable_autonomous_actions and self.service:
+                        with self.sessions() as session:
+                            actions = [a for a in session.get(Incident, incident_id).actions if not a.requires_approval]
+                        await self.service.verify(incident_id, actions[-1].id if actions else None)
                     return
+                elif decision.decision_type == 'EXECUTE_ACTION':
+                    if not self.service:
+                        raise ValueError('Autonomous executor is unavailable')
+                    action = await self.service.execute_autonomous(incident_id, decision.tool, decision.arguments, decision.reason)
+                    calls.clear()
+                    feedback = ('Action and exact-target verification passed.' if action['verification_status'] == 'PASSED'
+                                else 'Action failed or exact-target verification failed. Do not retry this target; inspect current evidence and report unresolved if no new safe action exists.')
+                    self.update_state(incident_id, phase='REASONING', next_action=None, last_action_id=action['id'])
                 elif decision.decision_type == 'REQUEST_APPROVAL':
                     self.propose_action(incident_id, decision.tool, decision.arguments, decision.reason, registry)
                     self.update_state(incident_id, phase='WAITING_FOR_APPROVAL')

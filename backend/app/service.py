@@ -5,6 +5,7 @@ import json
 from sqlalchemy import select, update
 
 from .agent import asdict
+from .autonomy import authorize
 from .gateway import validate_tool, WRITE_TOOLS
 from .models import Action, Incident, now
 from .schemas import CheckSpec
@@ -33,6 +34,77 @@ class IncidentService:
         self.settings, self.sessions, self.agent = settings, sessions, agent
         self.gateway, self.rag = gateway, rag
         self._locks: dict[str, asyncio.Lock] = {}
+
+    async def execute_autonomous(self, incident_id: str, tool: str, arguments: dict, reason: str, evidence_ids: list[str] | None = None) -> dict:
+        """Claim once, dispatch once, and verify the exact target before returning to reasoning."""
+        async with self._locks.setdefault(incident_id, asyncio.Lock()):
+            return await self._execute_autonomous(incident_id, tool, arguments, reason, evidence_ids)
+
+    async def _execute_autonomous(self, incident_id: str, tool: str, arguments: dict, reason: str, evidence_ids: list[str] | None = None) -> dict:
+        registry = await self.gateway.registry()
+        with self.sessions() as session:
+            incident = session.get(Incident, incident_id)
+            if not incident:
+                raise LookupError('Incident not found')
+            ids = evidence_ids or [o.id for o in incident.observations]
+            ids = authorize(self.settings, registry, incident, tool, arguments, ids)
+            candidate = type('Candidate', (), {'tool_name': tool, 'arguments': arguments})()
+            checks = self.verification_checks(incident.service, candidate)
+            key = 'container' if tool.endswith('_container') else 'service'
+            state_tool = 'docker_inspect' if key == 'container' else 'service_status'
+            target_checks = [c for c in checks if c.tool == state_tool and c.arguments == {key: arguments[key]}]
+            if not target_checks:
+                raise ValueError('No deterministic exact-target verification check')
+            for check in target_checks:
+                validate_tool(registry, check.tool, check.arguments)
+            action = Action(incident_id=incident_id, tool_name=tool, arguments=arguments, reason=redact(reason),
+                            requires_approval=False, approval_status='AUTO_AUTHORIZED', approved_at=now(), executed_at=now(),
+                            expires_at=now(), result={'dispatch_status': 'CLAIMED', 'evidence_observation_ids': ids})
+            session.add(action)
+            session.commit()
+            payload = asdict(action)
+        self.agent.audit(incident_id, 'autonomous_action_authorized', {'action_id': payload['id'], 'tool': tool, 'target': arguments[key], 'reason': reason, 'evidence_observation_ids': ids, 'timestamp': now().isoformat()})
+        try:
+            result = await asyncio.wait_for(self.gateway.execute(tool, arguments, approval=payload), timeout=self.settings.agent_write_timeout_seconds)
+        except Exception as exc:
+            result = {'ok': False, 'error': redact(str(exc), 1000), 'outcome': 'UNKNOWN_REQUIRES_INSPECTION', 'result': {}}
+        self.agent.record_observation(incident_id, tool, arguments, result, reason, phase='REMEDIATION')
+        with self.sessions() as session:
+            action = session.get(Action, payload['id'])
+            action.result = {**redact(result), 'evidence_observation_ids': ids}
+            session.commit()
+        self.agent.audit(incident_id, 'autonomous_action_executed', {'action_id': payload['id'], 'tool': tool, 'target': arguments[key], 'result': result})
+        verification = []
+        if result.get('ok'):
+            await asyncio.sleep(2)
+        # Even a failed/timeout response may have changed the host. Inspect it,
+        # record the observed state, and never replay this action ID or target.
+        for check in target_checks:
+            attempts = []
+            for attempt in range(4 if result.get('ok') else 1):
+                try:
+                    observed = await asyncio.wait_for(self.gateway.execute(check.tool, check.arguments), timeout=self.settings.agent_tool_timeout_seconds)
+                except Exception as exc:
+                    observed = {'ok': False, 'result': {}, 'error': redact(str(exc), 1000)}
+                passed = observed.get('ok') is True and matches(observed.get('result', {}), check.expect)
+                observation_id = self.agent.record_observation(incident_id, check.tool, check.arguments, observed,
+                                                               'Autonomous exact-target verification ' + ('passed.' if passed else 'failed.'), phase='VERIFICATION')
+                attempts.append({'passed': passed, 'observation_id': observation_id})
+                if passed:
+                    break
+                if attempt < 3 and result.get('ok'):
+                    await asyncio.sleep(3)
+            verification.append({'tool': check.tool, 'arguments': check.arguments, 'expect': check.expect,
+                                 'passed': passed, 'observation_id': observation_id, 'attempts': attempts})
+        verified = bool(verification) and all(item['passed'] for item in verification)
+        with self.sessions() as session:
+            action = session.get(Action, payload['id'])
+            action.verification_status = 'PASSED' if verified else 'FAILED'
+            action.result = {**action.result, 'verification': verification}
+            session.commit()
+            output = asdict(action)
+        self.agent.audit(incident_id, 'autonomous_action_verification', {'action_id': payload['id'], 'verified': verified, 'checks': verification})
+        return output
 
     async def approve(self, action_id: str) -> dict:
         with self.sessions() as session:
@@ -140,11 +212,18 @@ class IncidentService:
 
         visit(service)
         if action:
-            target_key = 'container' if action.tool_name in ('restart_container', 'start_container') else 'service'
+            target_key = 'container' if action.tool_name.endswith('_container') else 'service'
             target = action.arguments.get(target_key)
             # The administrator's topology must cover the action target as well as the affected service.
-            if not any(c.arguments.get(target_key) == target and c.tool in ('docker_inspect', 'service_status') for c in checks):
+            target_checks = [c for c in checks if c.arguments.get(target_key) == target and c.tool == ('docker_inspect' if target_key == 'container' else 'service_status')]
+            if not target_checks:
                 raise ValueError('No configured health check verifies the remediation target')
+            if action.tool_name.startswith('stop_'):
+                # A deliberate stop is not recovery. Verify only that its exact
+                # target stopped, never that the application remains healthy.
+                check = target_checks[0]
+                expected = {'state.running': False} if target_key == 'container' else {'state': 'inactive'}
+                return [CheckSpec(tool=check.tool, arguments=check.arguments, expect=expected)]
         unique = {}
         for check in checks:
             unique[json.dumps(check.model_dump(), sort_keys=True)] = check
@@ -193,9 +272,10 @@ class IncidentService:
         with self.sessions() as session:
             incident = session.get(Incident, incident_id)
             pending = [a for a in incident.actions if a.approval_status == 'PENDING']
-            incident.status = 'RESOLVED' if verified else ('WAITING_FOR_APPROVAL' if pending else 'OPEN')
-            incident.resolved_at = now() if verified else None
-            incident.agent_state = {**incident.agent_state, 'phase': 'RESOLVED' if verified else 'VERIFICATION_FAILED', 'verification': results}
+            stopped = bool(action_id and session.get(Action, action_id).tool_name.startswith('stop_'))
+            incident.status = 'OPEN' if stopped else 'RESOLVED' if verified else ('WAITING_FOR_APPROVAL' if pending else 'OPEN')
+            incident.resolved_at = None if stopped else now() if verified else None
+            incident.agent_state = {**incident.agent_state, 'phase': 'OPERATION_VERIFIED' if stopped and verified else 'RESOLVED' if verified else 'VERIFICATION_FAILED', 'verification': results}
             if action_id:
                 session.get(Action, action_id).verification_status = 'PASSED' if verified else 'FAILED'
             if verified:

@@ -1,5 +1,7 @@
 # Server inventory — 9 September 2026, before changes
 
+This is the last successfully inspected production inventory, **not a live 16 September confirmation**. The current source policy uses these recorded CodeDuel names. A fresh read-only SSH check on 16 September reached the host but was denied authentication; no target-name or systemd-state freshness claim is possible until access is restored.
+
 Inspected over authorized SSH as hp. No existing service configuration changed during discovery.
 
 - Host hp, HP Pavilion 15-cc1xx; Ubuntu 26.04 LTS, kernel 7.0.0-29.

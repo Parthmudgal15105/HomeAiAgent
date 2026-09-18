@@ -1,0 +1,9 @@
+// Only the dedicated gateway identity may start/restart this exact tunnel unit.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "aiops-gateway" &&
+        action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "cloudflared.service" &&
+        (action.lookup("verb") === "start" || action.lookup("verb") === "restart")) {
+        return polkit.Result.YES;
+    }
+});

@@ -1,12 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { QUICK_ACTIONS, suggestedService, resolutionTime, serviceLabel } = require('../.test-build/lib/dashboard.js');
-test('six quick actions select configured services without a fixed application name', () => {
-  const services = { machine: { type: 'linux_host' }, shop: { type: 'web_application', name: 'My shop' }, vpn: { tags: ['tailscale'] } };
-  assert.equal(QUICK_ACTIONS.length, 6);
+test('quick actions select configured services and the explicit CodeDuel profile', () => {
+  const services = { machine: { type: 'linux_host' }, shop: { type: 'web_application', name: 'My shop' }, vpn: { tags: ['tailscale'] }, codeduel: { type: 'web_application' } };
+  assert.equal(QUICK_ACTIONS.length, 7);
   assert.equal(suggestedService('health', services), 'machine');
   assert.equal(suggestedService('application', services), 'shop');
   assert.equal(suggestedService('tailscale', services), 'vpn');
+  assert.equal(suggestedService('start_codeduel', services), 'codeduel');
   assert.equal(serviceLabel('shop', services.shop), 'My shop');
 });
 test('resolution duration uses resolved time, not last activity', () => {

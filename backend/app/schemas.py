@@ -14,6 +14,12 @@ class IncidentCreate(StrictModel):
     severity: Literal['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] = 'MEDIUM'
 
 
+class OperationCreate(StrictModel):
+    application: str = Field(min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_.-]+$')
+    tool: Literal['start_container', 'stop_container', 'restart_container', 'start_service', 'stop_service', 'restart_service']
+    target: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+
+
 class HypothesisUpdate(StrictModel):
     description: str = Field(min_length=3, max_length=1000)
     confidence: float = Field(ge=0, le=1)
@@ -29,7 +35,7 @@ class Remediation(StrictModel):
 
 
 class Decision(StrictModel):
-    decision_type: Literal['TOOL_CALL', 'DIAGNOSIS', 'REQUEST_APPROVAL', 'NEED_USER_INPUT', 'STOP']
+    decision_type: Literal['TOOL_CALL', 'EXECUTE_ACTION', 'DIAGNOSIS', 'REQUEST_APPROVAL', 'NEED_USER_INPUT', 'STOP']
     tool: str | None = Field(default=None, max_length=80)
     arguments: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(default='', max_length=1500)
@@ -45,7 +51,7 @@ class Decision(StrictModel):
 
     @model_validator(mode='after')
     def validate_decision(self):
-        if self.decision_type in ('TOOL_CALL', 'REQUEST_APPROVAL') and not self.tool:
+        if self.decision_type in ('TOOL_CALL', 'EXECUTE_ACTION', 'REQUEST_APPROVAL') and not self.tool:
             raise ValueError('Tool decisions require a tool name')
         if self.decision_type == 'DIAGNOSIS' and (not self.root_cause or not self.evidence_observation_ids):
             raise ValueError('Diagnosis requires root_cause and current observation IDs')

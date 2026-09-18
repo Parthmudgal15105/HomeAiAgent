@@ -1,5 +1,15 @@
 # Implementation status and resume guide
 
+## Autonomous expansion — 16 September 2026 (local source, not deployed)
+
+- Added evidence- and topology-gated autonomous start/restart using the existing one-use signed gateway dispatch and persistent `Action`/`AuditEvent` records. Stop remains operator-approved only. Each action receives exact-target verification; the final diagnosis runs full configured application/dependency checks. One target is attempted at most once per incident, with a six-action default budget (five CodeDuel containers plus tunnel if needed).
+- Checked-in policy now names the five CodeDuel containers from the last inspected production Compose inventory and `cloudflared`. An exact-unit polkit rule is included for cloudflared start/restart; Docker, SSH and Tailscale unit writes remain blocked. The new frontend exposes a Turn on CodeDuel prompt and recent autonomous operations.
+- Local checks: 174 Python tests passed (backend, gateway, evaluation and script tests); after the final bounded verification-poll edit, the 12 focused autonomy/approval tests also passed. Ten frontend tests and the Next.js production build passed, `git diff --check` passed, and the secret scanner found zero findings across 141 tracked/new files. Autonomous tests cover scoped action, verification and retry rejection. These are local results, not host smoke checks.
+- Deployment **not completed**. A read-only SSH attempt reached `100.98.193.60` but failed `Permission denied (publickey,password)` with available non-interactive credentials. A read-only HTTP check of `http://100.98.193.60:3080` returned 200, confirming only that the older dashboard endpoint responds. Fresh container names, actual server environment flags, cloudflared polkit behavior, authenticated production smoke and source/image parity are unverified. No CodeDuel production container was altered.
+- The previous deployed Gemini 429 quota and measured qwen2.5:3b 0/8 root-cause results remain unresolved model-quality limitations; do not treat this source implementation as an accepted autonomous production system.
+
+The dated material below is historical and describes the last verified deployment, not the new local source.
+
 Last verified: 13 September 2026, 07:54 UTC. **Overall status: incomplete; the Gemini-enabled deployment is healthy and the integration passes locally, but deployed generations are temporarily blocked by the supplied key's free-tier request quota.**
 
 ## Source and deployment identity
@@ -130,3 +140,23 @@ Live runbook ingestion caught a deployment issue: the initial Git conversion use
 - Tests:154 Python tests passed before the inventory fix; inventory-specific gateway suite71 passed; full follow-up155 passed. Nine frontend tests, typecheck/build and published checkpoint CI passed. Browser sign-in, overview and historical incident reopening verified.
 - Deployment: new fixes remain on Mac while the actual-model comparison runs. Server remains on7b8cbfb. Fresh gateway19/19, auth/logout and private-port checks passed. CodeDuel API500/unhealthy with MongoDB TLS errors existed before this deployment cycle; other four CodeDuel containers healthy, no modifications performed.
 - Remaining: complete revised actual-model benchmarks, live model investigation, modeled mocked recovery/RAG, and exact final Git deployment.
+
+## 18 September 2026 — exact policy and local verification
+
+- Preserved the pre-existing uncommitted implementation while adding per-target `allowed_actions` and `autonomous_actions` at the gateway, with an exact gateway scope check. CodeDuel and cloudflared source grants contain start/restart only; the demo alone retains manual stop. Backend autonomous dispatch reads the gateway's autonomous-target metadata. Changed the installation default to `ENABLE_AUTONOMOUS_ACTIONS=false` because the recorded model acceptance gate remains unmet.
+- Added gateway tests for exact action scope and invalid grants. Fixed compacted context so a critical log marker survives a tight budget.
+- Local validation: ten frontend tests passed; Next.js 16.3.4 production build and TypeScript passed; secret scan found zero findings across 141 files; 82 focused Python tests passed with four host-dependent tests deselected. A full Python run produced 169 passes, two failures and three errors before the context fix; the context failure then passed in isolation. The remaining failures/errors were macOS sandbox restrictions on loopback socket binding and a psutil swap-memory call. These are environmental, not acceptance passes.
+- Initial sandboxed Tailscale HTTP and SSH checks could not connect. A later read-only check with network access confirmed HTTP 200 and an unauthenticated session, while SSH authentication was rejected. No server deployment, live authenticated login, real service-state, production action, boot persistence or revision-parity claim can be made. No CodeDuel service was changed.
+- Optional Cloudflare Access steps are documented; the second frontend instance and account-side route remain unimplemented. Real-model eight-case evaluation and deployed RAG/incident acceptance remain outstanding.
+
+### Final local gate correction — 18 September 2026
+
+The complete Python suite was rerun with local loopback and host-memory access permitted: **177 passed, 2 deprecation warnings**. The earlier sandbox-only socket/psutil failures were environmental. Ten frontend tests passed; the Next.js production build and TypeScript check passed. The scripted eight-case orchestration fixture passed 8/8 but did not call a reasoning model and is not a model-accuracy result. Secret scan: 141 files, zero findings. `git diff --check` passed.
+
+Read-only Tailscale checks from this Mac returned HTTP 200 at port 3080 and `{"authenticated":false}` from `/api/session`; ports 18000, 18081, 15432, 16333 and 11434 did not accept connections over the Tailscale IP. This demonstrates endpoint response and unauthenticated session status, not authenticated remote use. SSH to `hp@100.98.193.60` reached the host but was rejected (`Permission denied (publickey,password)`), so server revision, installed gateway policy, live service states, action execution, boot persistence, RAG ingestion and image parity remain unverified. The source has not been committed, pushed or deployed.
+
+## 18 September 2026 — authorized SSH restored, pre-deployment inventory
+
+The operator supplied working interactive SSH credentials. A read-only session reached `hp@100.98.193.60`; the server checkout is clean on `main` at `db368bbbf5726d3d78bbb5ae43bb38ae0d669280`. Backend and frontend running image labels also report this revision. The six core Compose services and demo are running and healthy; `aiops-gateway`, Docker, Tailscale and cloudflared are active and enabled. The live CodeDuel names match the recorded policy: `codeduel-proxy-1`, `codeduel-frontend-1`, `codeduel-api-1`, `codeduel-worker-1`, `codeduel-redis-1`. Before deployment, CodeDuel API is unhealthy, the other four are healthy, the public homepage returns 200, and the public problems endpoint timed out after eight seconds. This is the deployment baseline; no CodeDuel action was taken. The installed gateway remains demo-only, while the source policy includes exact production grants. The server environment has `ENABLE_WRITE_ACTIONS=true`, `ENABLE_AUTONOMOUS_ACTIONS` unset and `LLM_PROVIDER=gemini`; the new source default keeps autonomy off.
+
+Fresh local validation before deployment: 177 Python tests passed, 10 frontend tests passed, TypeScript and Next.js production build passed, secret scan reported zero findings across 142 files, diff check passed and the eight scripted controller fixtures passed. These do not establish Gemini root-cause accuracy.

@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     agent_max_parallel_incidents: int = Field(1, ge=1, le=4)
     approval_ttl_seconds: int = Field(3600, ge=60, le=86400)
     enable_write_actions: bool = False
+    enable_autonomous_actions: bool = False
+    autonomous_max_actions_per_incident: int = Field(6, ge=1, le=8)
     disk_warning_percent: float = 80
     disk_high_percent: float = 90
     disk_critical_percent: float = 95

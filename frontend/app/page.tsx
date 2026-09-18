@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { QUICK_ACTIONS, observationFailed, resolutionTime, serviceLabel, suggestedService, type ServiceMap } from "../lib/dashboard";
-import { ServerOverview, type OverviewData } from "../components/server-overview";
+import { ServerOverview, type ApplicationHealth, type OperationOption, type OverviewData } from "../components/server-overview";
 import {
   Activity,
   ArrowLeft,
@@ -42,6 +42,7 @@ type Hyp = {
 };
 type Action = {
   id: string;
+  incident_id?: string;
   tool_name: string;
   arguments: unknown;
   reason: string;
@@ -49,8 +50,11 @@ type Action = {
   approval_status: string;
   verification_status?: string;
   result?: unknown;
+  created_at?: string;
+  application?: string;
 };
 type Report = {
+  operation_request?: boolean;
   root_cause?: string;
   confidence?: number;
   evidence_observation_ids?: string[];
@@ -78,6 +82,7 @@ type Incident = {
   actions?: Action[];
   report?: Report;
   agent_state?: Record<string, unknown>;
+  operation_request?: boolean;
 };
 type Topology = { services?: ServiceMap };
 function date(s: string) {
@@ -121,6 +126,10 @@ export default function Dashboard() {
     [service, setService] = useState(""),
     [overview, setOverview] = useState<OverviewData | null>(null),
     [overviewBusy, setOverviewBusy] = useState(false),
+    [applicationHealth, setApplicationHealth] = useState<ApplicationHealth | null>(null),
+    [applicationBusy, setApplicationBusy] = useState(false),
+    [operations, setOperations] = useState<OperationOption[]>([]),
+    [recentOperations, setRecentOperations] = useState<Action[]>([]),
     [view, setView] = useState("investigate"),
     [incidents, setIncidents] = useState<Incident[]>([]),
     [incidentsTotal, setIncidentsTotal] = useState(0),
@@ -239,9 +248,44 @@ export default function Dashboard() {
   }, [auth, refresh]);
   const refreshOverview = useCallback(async () => {
     setOverviewBusy(true);
-    try { setOverview(await api("overview")); } catch (e) { setError((e as Error).message); }
+    try {
+      setOverview(await api("overview"));
+      try { setRecentOperations((await api("operations/recent")).operations || []); } catch { setRecentOperations([]); }
+      const options: OperationOption[] = [];
+      try {
+        const tools = await api("tools");
+        if (tools.writes_enabled) for (const tool of tools.tools || []) {
+          if (tool.risk_level !== "LOW_RISK_WRITE" || !/^(start|restart)_(container|service)$/.test(tool.name)) continue;
+          const key = tool.name.endsWith("_container") ? "container" : "service";
+          for (const target of tool.parameters?.properties?.[key]?.enum || []) options.push({ tool: tool.name, target });
+        }
+      } catch {
+        // Overview remains useful when live tool metadata is unavailable.
+      }
+      setOperations(options);
+    } catch (e) { setError((e as Error).message); }
     finally { setOverviewBusy(false); }
   }, [api]);
+  async function checkApplication(id: string) {
+    setApplicationBusy(true);
+    setApplicationHealth(null);
+    setError("");
+    try { setApplicationHealth(await api(`applications/${id}/health`)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setApplicationBusy(false); }
+  }
+  async function proposeOperation(application: string, tool: string, target: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const incident = await api("operations/propose", "POST", { application, tool, target });
+      setSelected(incident);
+      setView("investigate");
+      history.replaceState({}, "", "/?incident=" + incident.id);
+      refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
   useEffect(() => {
     if (!auth || view !== "overview") return;
     refreshOverview();
@@ -446,7 +490,7 @@ export default function Dashboard() {
         <div className="railfoot">
           <ShieldCheck size={20} />
           <p>Read-only diagnostics run automatically.</p>
-          <p>Changes require your approval.</p>
+          <p>Configured recovery can run automatically; every action is audited.</p>
           <hr className="divider" />
           <button
             onClick={async () => {
@@ -482,7 +526,8 @@ export default function Dashboard() {
           </div>
         )}
         {view === "overview" ? (
-          <ServerOverview data={overview} busy={overviewBusy} refresh={refreshOverview} investigate={() => { setSymptom(QUICK_ACTIONS[0].symptom); setService(suggestedService("health", topology.services || {})); navigate("investigate"); }} />
+          <><ServerOverview data={overview} busy={overviewBusy} refresh={refreshOverview} investigate={() => { setSymptom(QUICK_ACTIONS[0].symptom); setService(suggestedService("health", topology.services || {})); navigate("investigate"); }} applicationHealth={applicationHealth} applicationBusy={applicationBusy} checkApplication={checkApplication} operations={operations} proposeOperation={proposeOperation} />
+          <section className="panel"><h2>Recent autonomous operations</h2>{recentOperations.length ? recentOperations.map(a => <details key={a.id}><summary>{a.created_at ? date(a.created_at) : ""} · {a.application} · {a.tool_name} {json(a.arguments)} · {a.verification_status}</summary><p>{a.reason}</p><pre>{json(a.result)}</pre>{a.incident_id && <a className="evidence-link" href={`/?incident=${a.incident_id}`}>Open incident evidence and audit</a>}</details>) : <p className="footnote">No autonomous operations recorded yet.</p>}</section></>
         ) : view === "topology" ? (
           <>
             <div className="titleline">
@@ -551,7 +596,7 @@ export default function Dashboard() {
                         >
                           <div>
                             <strong>{i.title}</strong>
-                            <small>{i.root_cause || "Diagnosis pending"}</small>
+                            <small>{i.root_cause || (i.operation_request ? "Operator-requested action" : "Diagnosis pending")}</small>
                           </div>
                         </button>
                       </td>
@@ -591,7 +636,7 @@ export default function Dashboard() {
             <div className="titleline">
               <div>
                 <div className="eyebrow">
-                  INCIDENT / {selected.id.slice(0, 8)}
+                  {report.operation_request ? "OPERATION" : "INCIDENT"} / {selected.id.slice(0, 8)}
                 </div>
                 <h1>{selected.title}</h1>
                 <p className="muted">
@@ -604,7 +649,7 @@ export default function Dashboard() {
               <div>
                 {!rootCause && selected.summary && (
                   <section className="panel">
-                    <h2>Investigation update</h2>
+                    <h2>{report.operation_request ? "Operation proposal" : "Investigation update"}</h2>
                     <p>{selected.summary}</p>
                   </section>
                 )}
@@ -670,15 +715,15 @@ export default function Dashboard() {
                 {(selected.actions || []).map((a) => (
                   <section key={a.id} className="panel approval">
                     <div className="panelhead">
-                      <h2>Remediation approval</h2>
+                      <h2>{a.approval_status === "AUTO_AUTHORIZED" ? "Autonomous operation" : "Remediation approval"}</h2>
                       <Pill status={a.approval_status} />
                     </div>
                     <h3>{a.tool_name}</h3>
                     <p className="muted">{a.reason}</p>
                     <pre>{json(a.arguments)}</pre>
                     <small>
-                      Risk: {a.risk_level.replaceAll("_", " ")}. Restarting a
-                      service may interrupt traffic.
+                      Risk: {a.risk_level.replaceAll("_", " ")}. This operation
+                      may interrupt the selected service. {a.approval_status === "AUTO_AUTHORIZED" ? "Policy authorized this exact target using current evidence." : "Approval applies only to this exact target."}
                     </small>
                     {a.approval_status === "PENDING" && (
                       <div className="actions">
@@ -897,7 +942,7 @@ export default function Dashboard() {
               </div>
               <span className="pill">
                 <ShieldCheck size={13} style={{ marginRight: 6 }} />
-                Approval required for changes
+                Bounded autonomous recovery
               </span>
             </div>
             <section className="panel composer">
@@ -919,8 +964,8 @@ export default function Dashboard() {
                 />
                 <div className="composerbar">
                   <span className="meta">
-                    <LockKeyhole size={14} /> Logs and reasoning stay on this
-                    server
+                    <LockKeyhole size={14} /> Local mode stays on this server;
+                    optional Gemini sends bounded context externally
                   </span>
                   <button
                     className="primary"

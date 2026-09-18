@@ -79,3 +79,40 @@ def test_restart_marks_inflight_work_interrupted_without_replay(system):
         incident = session.get(Incident, incident_id)
         assert incident.status == 'FAILED'
         assert incident.agent_state['phase'] == 'INTERRUPTED'
+
+
+def test_application_health_is_deterministic_and_read_only(system):
+    settings, sessions, gateway, agent, _, _ = system
+    app = create_app(settings, sessions=sessions, gateway=gateway, llm=agent.llm)
+    headers = {'Authorization': 'Bearer test-operator-token'}
+    with TestClient(app) as client:
+        response = client.get('/api/applications/codeduel/health', headers=headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body['status'] == 'UNHEALTHY'
+        assert {item['id'] for item in body['components']} == {'codeduel', 'sandbox'}
+        assert all(call[2] is None for call in gateway.calls)
+        assert client.get('/api/applications/unknown/health', headers=headers).status_code == 404
+
+
+def test_operator_proposal_reuses_approval_and_target_verification(system):
+    settings, sessions, gateway, agent, _, _ = system
+    app = create_app(settings, sessions=sessions, gateway=gateway, llm=agent.llm)
+    headers = {'Authorization': 'Bearer test-operator-token'}
+    with TestClient(app) as client:
+        rejected = client.post('/api/operations/propose', headers=headers,
+                               json={'application': 'codeduel', 'tool': 'restart_container', 'target': 'other'})
+        assert rejected.status_code == 409
+        assert gateway.calls == []
+        response = client.post('/api/operations/propose', headers=headers,
+                               json={'application': 'codeduel', 'tool': 'start_container', 'target': 'sandbox'})
+        assert response.status_code == 201
+        body = response.json()
+        assert body['status'] == 'WAITING_FOR_APPROVAL'
+        assert len(body['observations']) == 1
+        assert body['actions'][0]['tool_name'] == 'start_container'
+        assert all(call[2] is None for call in gateway.calls)
+        approved = client.post('/api/actions/' + body['actions'][0]['id'] + '/approve', headers=headers)
+        assert approved.status_code == 200
+        assert approved.json()['verification_status'] == 'PASSED'
+        assert client.get('/api/incidents/' + body['id'], headers=headers).json()['status'] == 'RESOLVED'

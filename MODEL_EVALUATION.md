@@ -36,3 +36,9 @@ Every Qwen2.5 case reached the three-rejected-decision safety limit by repeating
 `gemini-3.8-flash` is available as an explicit cloud reasoning option while Ollama remains the default and continues to provide local embeddings. A live Interactions API connectivity smoke returned valid structured JSON in6.7394seconds with no retry. The production-loop synthetic Redis scenario then passed in22.4611seconds across four requests with root-cause/evidence accuracy100% and zero invalid, repeated, rejected, unnecessary or unsafe decisions. Per-request latencies were3.4532s,5.6957s,6.3295s and6.8752s. This single scenario is integration evidence only; complete the same eight-case suite before comparing its diagnostic quality with local candidates.
 
 The server deployment authenticated to the configured model successfully, but its post-deployment generation smoke was blocked by HTTP429 after the key reached the20-request free-tier quota used during development. This is an external quota result, not a model-quality score; deployed inference remains unverified until a later successful run.
+
+## 18 September 2026 acceptance status
+
+No new real-model benchmark was completed in this source pass. The previous qwen2.5:3b eight-case 0/8 result and Gemini one-case success followed by quota failure remain the available evidence. The identical eight synthetic cases must be run against the intended production reasoning provider and record root cause, tool choice, invalid output, repeats, unsafe attempts, diagnostic steps, latency, and recovery. Until the documented acceptance threshold is met, `ENABLE_AUTONOMOUS_ACTIONS` defaults to false. Local policy unit tests cannot substitute for model accuracy or deployed recovery success.
+
+The 18 September scripted fixture rerun passed all eight controller scenarios with no reasoning model invoked. It does not change the production model acceptance status above.

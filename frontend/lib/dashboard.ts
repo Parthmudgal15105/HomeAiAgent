@@ -15,11 +15,12 @@ export type ServiceProfile = {
 };
 
 export type ServiceMap = Record<string, ServiceProfile>;
-export type QuickAction = "health" | "application" | "docker" | "cloudflare" | "tailscale" | "slow";
+export type QuickAction = "health" | "application" | "start_codeduel" | "docker" | "cloudflare" | "tailscale" | "slow";
 
 export const QUICK_ACTIONS: { id: QuickAction; label: string; symptom: string }[] = [
   { id: "health", label: "Check server health", symptom: "Check the current server health and investigate any warning or critical condition." },
   { id: "application", label: "Application down", symptom: "The selected application is down. Investigate its current state and dependencies." },
+  { id: "start_codeduel", label: "Turn on CodeDuel", symptom: "Turn on CodeDuel. Inspect configured components and dependencies, start only stopped required targets in dependency order, verify each action, then check API readiness and the public endpoint. Report any failure outside allowed capabilities." },
   { id: "docker", label: "Docker issue", symptom: "Docker workloads are having problems. Investigate the daemon and affected containers." },
   { id: "cloudflare", label: "Cloudflare 502", symptom: "The public application returns Cloudflare 502. Compare the tunnel and local origin health." },
   { id: "tailscale", label: "Tailscale unavailable", symptom: "Tailscale is unavailable. Investigate current connectivity without changing networking." },
@@ -33,7 +34,7 @@ export function serviceLabel(id: string, profile?: ServiceProfile): string {
 export function suggestedService(action: QuickAction, services: ServiceMap): string {
   const entries = Object.entries(services);
   const terms = action === "health" || action === "slow" ? ["host", "server", "linux"]
-    : action === "application" ? ["application", "app", "public"] : [action];
+    : action === "start_codeduel" ? ["codeduel"] : action === "application" ? ["application", "app", "public"] : [action];
   const exact = entries.find(([id, profile]) => terms.some(term =>
     id.toLowerCase() === term || profile.type?.toLowerCase().includes(term) || profile.tags?.some(tag => tag.toLowerCase() === term),
   ));

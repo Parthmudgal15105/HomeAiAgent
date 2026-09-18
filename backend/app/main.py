@@ -2,21 +2,23 @@ import asyncio
 from contextlib import asynccontextmanager
 import hmac
 import logging
+from types import SimpleNamespace
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jsonschema.exceptions import ValidationError as SchemaValidationError
 from sqlalchemy import func, select, text, update
 
 from .agent import Agent, asdict
 from .config import Settings, get_settings
 from .db import make_database
-from .gateway import DiagnosticGateway
+from .gateway import DiagnosticGateway, OperationsGateway, validate_tool
 from .llm import GeminiLLMProvider, create_llm_provider
 from .models import Action, AuditEvent, EvaluationRun, Incident, now
 from .rag import LocalRAG
 from .safety import redact
-from .schemas import IncidentCreate
+from .schemas import IncidentCreate, OperationCreate
 from .service import IncidentService
 from .overview import Overview
 
@@ -29,11 +31,12 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
     engine = None
     if sessions is None:
         engine, sessions = make_database(settings.database_url)
-    gateway = gateway or DiagnosticGateway(settings)
+    gateway = OperationsGateway(settings, gateway or DiagnosticGateway(settings))
     llm = llm or create_llm_provider(settings)
     rag = rag or (LocalRAG(settings) if settings.rag_enabled else None)
     agent = Agent(settings, sessions, gateway, llm, rag)
     service = IncidentService(settings, sessions, agent, gateway, rag)
+    agent.service = service
     overview_service = Overview(settings, gateway)
     tasks: dict[str, asyncio.Task] = {}
     bearer = HTTPBearer(auto_error=False)
@@ -113,7 +116,8 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
     async def list_incidents(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
         with sessions() as session:
             incidents = session.scalars(select(Incident).order_by(Incident.created_at.desc()).limit(limit).offset(offset))
-            rows = [{k: v for k, v in asdict(i).items() if k not in ('report', 'agent_state')} for i in incidents]
+            rows = [{**{k: v for k, v in asdict(i).items() if k not in ('report', 'agent_state')},
+                     'operation_request': bool((i.report or {}).get('operation_request'))} for i in incidents]
             return {'incidents': rows, 'total': session.scalar(select(func.count()).select_from(Incident))}
 
     @router.post('/incidents', status_code=201)
@@ -187,6 +191,69 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
             return await overview_service.snapshot()
         except Exception as exc:
             raise HTTPException(503, 'Server overview unavailable: ' + str(redact(str(exc), 300)))
+
+    @router.get('/applications/{application}/health')
+    async def application_health(application: str):
+        try:
+            registry = await gateway.registry()
+            validate_tool(registry, 'check_application_health', {'application': application})
+            result = (await gateway.execute('check_application_health', {'application': application}))['result']
+            agent.audit(None, 'application_health_checked', {'application': application, 'status': result['status'],
+                                                              'components': [{'id': item['id'], 'status': item['status']} for item in result['components']]})
+            return result
+        except (ValueError, SchemaValidationError) as exc:
+            raise HTTPException(404, str(exc))
+
+    @router.post('/operations/propose', status_code=201)
+    async def propose_operation(body: OperationCreate):
+        if not settings.enable_write_actions:
+            raise HTTPException(409, 'Write actions are disabled')
+        key = 'container' if body.tool.endswith('_container') else 'service'
+        arguments = {key: body.target}
+        registry = await gateway.registry()
+        try:
+            validate_tool(registry, body.tool, arguments, allow_write=True)
+            candidate = SimpleNamespace(tool_name=body.tool, arguments=arguments)
+            checks = service.verification_checks(body.application, candidate)
+            for check in checks:
+                validate_tool(registry, check.tool, check.arguments)
+        except (ValueError, SchemaValidationError) as exc:
+            raise HTTPException(409, str(exc))
+        observation_tool = 'docker_inspect' if key == 'container' else 'service_status'
+        observation_args = {key: body.target}
+        try:
+            observation = await asyncio.wait_for(gateway.execute(observation_tool, observation_args), settings.agent_tool_timeout_seconds)
+        except Exception as exc:
+            raise HTTPException(503, 'Target precheck unavailable: ' + str(redact(str(exc), 300)))
+        if not observation.get('ok'):
+            raise HTTPException(503, 'Target precheck unavailable; no action was proposed')
+        with sessions() as session:
+            incident = Incident(title=f'{body.tool.replace("_", " ")} {body.target}',
+                                description='Operator-requested constrained operation. Current target state was inspected before proposing it.',
+                                service=body.application)
+            session.add(incident)
+            session.commit()
+            incident_id = incident.id
+        observation_id = agent.record_observation(incident_id, observation_tool, observation_args, observation,
+                                                   'Current target state before an operator-requested action.', phase='PRECHECK')
+        with sessions() as session:
+            incident = session.get(Incident, incident_id)
+            incident.summary = 'Awaiting approval for an exact operator-requested operation; no outage diagnosis is claimed.'
+            incident.report = {'evidence_observation_ids': [observation_id], 'operation_request': True,
+                               'verification_plan': [f'{check.tool} {check.arguments} must match {check.expect}' for check in checks]}
+            session.commit()
+        reason = f'Operator requested {body.tool} on the inspected {body.target} target.'
+        action_id = agent.propose_action(incident_id, body.tool, arguments, reason, registry)
+        agent.audit(incident_id, 'operation_requested', {'action_id': action_id, 'tool': body.tool,
+                                                          'arguments': arguments, 'precheck_observation_id': observation_id})
+        return detail(incident_id)
+
+    @router.get('/operations/recent')
+    async def recent_operations():
+        with sessions() as session:
+            actions = list(session.scalars(select(Action).where(Action.requires_approval.is_(False)).order_by(Action.created_at.desc()).limit(20)))
+            return {'operations': [{**asdict(action), 'application': session.get(Incident, action.incident_id).service}
+                                   for action in actions]}
 
     @router.get('/tools')
     async def tools():

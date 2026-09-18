@@ -29,6 +29,8 @@ with os.fdopen(fd,'w') as f:
 PY
 chown -R root:root /opt/aiops-gateway
 install -m 644 deploy/aiops-gateway.service /etc/systemd/system/aiops-gateway.service
+install -d -m 755 /etc/polkit-1/rules.d
+install -m 644 deploy/49-aiops-cloudflared.rules /etc/polkit-1/rules.d/49-aiops-cloudflared.rules
 systemctl daemon-reload
 systemctl enable --now aiops-gateway.service
 systemctl restart aiops-gateway.service

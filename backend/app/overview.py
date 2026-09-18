@@ -24,6 +24,10 @@ def classify(signals: dict, application_checks: list[dict]) -> tuple[str, list[d
             percent = result.get('used_percent')
             if isinstance(percent, (int, float)) and percent >= 80:
                 add('Critical' if percent > 95 else 'Warning', key, f'{percent}% used.')
+        elif key == 'cpu_usage':
+            percent = result.get('used_percent')
+            if isinstance(percent, (int, float)) and percent >= 80:
+                add('Critical' if percent > 95 else 'Warning', key, f'{percent}% CPU used in the sample.')
         elif key == 'system_uptime':
             load = result.get('load_average', [0])[0]
             cores = result.get('cpu_count') or 1
@@ -72,7 +76,7 @@ class Overview:
                 return deepcopy(self._cached)
             registry = await self.gateway.registry()
             topology = self.settings.topology()
-            plan = [('memory_usage', 'memory_usage', {}), ('system_uptime', 'system_uptime', {}),
+            plan = [('cpu_usage', 'cpu_usage', {}), ('memory_usage', 'memory_usage', {}), ('system_uptime', 'system_uptime', {}),
                     ('disk_usage', 'disk_usage', {'path': '/'}), ('docker_list', 'docker_list', {}),
                     ('network_interfaces', 'network_interfaces', {})]
             for name in ('tailscale_status', 'cloudflared_status'):

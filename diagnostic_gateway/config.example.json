@@ -16,6 +16,8 @@
   "disk_paths": ["/", "/home/hp"],
   "write_containers": [],
   "write_services": [],
+  "allowed_actions": {},
+  "autonomous_actions": {},
   "writes_enabled": false,
   "command_timeout_seconds": 8,
   "max_output_bytes": 32768,

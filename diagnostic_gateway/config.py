@@ -41,6 +41,9 @@ class GatewayConfig(BaseModel):
     disk_paths: list[str] = Field(default_factory=lambda: ["/"])
     write_containers: list[str] = Field(default_factory=list)
     write_services: list[str] = Field(default_factory=list)
+    # Exact tool names per target. Missing entries deny writes.
+    allowed_actions: dict[str, list[str]] = Field(default_factory=dict)
+    autonomous_actions: dict[str, list[str]] = Field(default_factory=dict)
     writes_enabled: bool = False
     command_timeout_seconds: int = Field(default=8, ge=1, le=30)
     max_output_bytes: int = Field(default=32768, ge=1024, le=131072)
@@ -59,6 +62,18 @@ class GatewayConfig(BaseModel):
                 raise ValueError("Unsafe configured host")
         if not set(self.write_containers).issubset(self.containers) or not set(self.write_services).issubset(self.services):
             raise ValueError("Write targets must be included in the diagnostic allowlist")
+        valid = {"start_container", "restart_container", "stop_container", "start_service", "restart_service", "stop_service"}
+        for target, actions in self.allowed_actions.items():
+            if target not in self.write_containers + self.write_services or not actions or len(actions) != len(set(actions)):
+                raise ValueError("Action policy target must be a unique configured write target")
+            category = "_container" if target in self.write_containers else "_service"
+            if any(action not in valid or not action.endswith(category) for action in actions):
+                raise ValueError("Action policy contains an invalid tool for its target")
+            if target in {"docker", "ssh", "sshd", "tailscaled"} or (target == "cloudflared" and "stop_service" in actions):
+                raise ValueError("Action policy grants a protected host operation")
+        for target, actions in self.autonomous_actions.items():
+            if not actions or not set(actions).issubset(self.allowed_actions.get(target, [])) or any(action.startswith("stop_") for action in actions):
+                raise ValueError("Autonomous action must be an allowed start or restart")
         for endpoint in self.container_http.values():
             if endpoint.container not in self.containers:
                 raise ValueError("Container HTTP target must be allowlisted")

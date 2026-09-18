@@ -89,6 +89,13 @@ def compact_result(result: dict, budget: int, summary: str) -> dict:
         candidate['_context_abbreviated'] = True
         if size(candidate) <= budget:
             return candidate
+    lines = result.get('lines') if isinstance(result, dict) else None
+    if isinstance(lines, list):
+        important = next((line for line in lines if isinstance(line, str) and ERROR.search(line)), None)
+        if important:
+            candidate = {'lines': [clipped(important, max(20, budget - 55))], '_context_abbreviated': True}
+            if size(candidate) <= budget:
+                return candidate
     # The deterministic interpretation preserves the observed finding even when a
     # very wide result cannot fit. Full raw/normalized data remain in PostgreSQL.
     return {'_context_summary': clipped(summary, max(0, budget - 40))}
@@ -101,12 +108,18 @@ def compact_context(context: dict, budget: int) -> dict:
     value['context_compacted'] = 'Some bulky results are summarized; all observation IDs are retained. Full evidence remains persisted.'
     for tool in value['tools']:
         tool['parameters'] = compact_schema(tool['parameters'])
+        if isinstance(tool.get('description'), str):
+            tool['description'] = clipped(tool['description'], 90)
     topology = value.get('topology', {})
     # Retain the whole dependency graph. Terse descriptions avoid removing a
     # potentially relevant reverse dependency based only on the initial symptom.
     for service in topology.get('services', {}).values():
         if isinstance(service.get('description'), str):
-            service['description'] = clipped(service['description'], 220)
+            service['description'] = clipped(service['description'], 120)
+        # Health checks and dependency edges carry the operational meaning.
+        # These display-only fields are already available elsewhere in the UI.
+        for key in ('name', 'tags', 'overview', 'public_urls', 'local_health_urls'):
+            service.pop(key, None)
     value['incident']['description'] = clipped(value['incident'].get('description', ''), 1200)
     for hypothesis in value['hypotheses']:
         hypothesis['description'] = clipped(hypothesis['description'], 250)
