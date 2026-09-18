@@ -1,6 +1,6 @@
 # Local model evaluation
 
-Status: in progress. These measurements are real Ollama CPU inference, but the initial four-case microbenchmark is not full incident accuracy.
+Status: production model gate not passed. These measurements are real Ollama CPU inference, but the initial four-case microbenchmark is not full incident accuracy.
 
 Hardware: Intel i5-8250U,16GB RAM; Ollama limited to3CPU/7GB; no GPU offload. Both candidates are quantized Q4_K_M models.
 
@@ -19,15 +19,15 @@ Qwen2.5 completed on10 September2026 using Ollama directly, production Agent, is
 
 | Metric | qwen2.5:3b | qwen3:4b |
 |---|---:|---|
-| Root-cause accuracy |0/8|Running|
-| Top-3 accuracy |1/8|Running|
-| Average executed tools |4.125|Running|
-| Unnecessary tools, total |14|Running|
-| Repeated executions |0|Running|
-| Rejected repeat attempts |24|Running|
-| Invalid JSON |0|Running|
-| Unsafe action attempts |0|Running|
-| Average incident latency |265.24s|Running|
+| Root-cause accuracy |0/8|Not completed|
+| Top-3 accuracy |1/8|Not completed|
+| Average executed tools |4.125|Not completed|
+| Unnecessary tools, total |14|Not completed|
+| Repeated executions |0|Not completed|
+| Rejected repeat attempts |24|Not completed|
+| Invalid JSON |0|Not completed|
+| Unsafe action attempts |0|Not completed|
+| Average incident latency |265.24s|Not completed|
 
 Every Qwen2.5 case reached the three-rejected-decision safety limit by repeating prior diagnostics. Valid JSON alone did not produce a useful diagnosis. Model selection remains provisional until the identical Qwen3 comparison and live acceptance complete.
 
@@ -37,8 +37,18 @@ Every Qwen2.5 case reached the three-rejected-decision safety limit by repeating
 
 The server deployment authenticated to the configured model successfully, but its post-deployment generation smoke was blocked by HTTP429 after the key reached the20-request free-tier quota used during development. This is an external quota result, not a model-quality score; deployed inference remains unverified until a later successful run.
 
-## 18 September 2026 acceptance status
+## 18 September 2026 real-provider acceptance
 
-No new real-model benchmark was completed in this source pass. The previous qwen2.5:3b eight-case 0/8 result and Gemini one-case success followed by quota failure remain the available evidence. The identical eight synthetic cases must be run against the intended production reasoning provider and record root cause, tool choice, invalid output, repeats, unsafe attempts, diagnostic steps, latency, and recovery. Until the documented acceptance threshold is met, `ENABLE_AUTONOMOUS_ACTIONS` defaults to false. Local policy unit tests cannot substitute for model accuracy or deployed recovery success.
+The intended-setting Gemini run completed two cases (API stopped and Redis down), both FAILED with zero diagnostics and approximately 240 seconds per case, before the 600-second outer command limit stopped the suite. No complete accuracy result is available from that run.
 
-The 18 September scripted fixture rerun passed all eight controller scenarios with no reasoning model invoked. It does not change the production model acceptance status above.
+A separate bounded availability run used the same eight scenarios and production Agent, with explicit per-call timeout 20 seconds and incident runtime limit 60 seconds. It completed and persisted an EvaluationRun: **0/8 passed**, one ReadTimeout and seven HTTP 429 quota errors (the provider reported a 20-request/day free-tier limit). No tools or actions executed. Root-cause and evidence scores were zero; mean case latency was 5.2517 seconds. Zero invalid/unsafe decisions here reflects no successful decisions, not demonstrated model safety. These changed timeout settings make this an availability result, not a comparable diagnostic-quality benchmark.
+
+Report: `reports/model-comparison/2026-09-18-gemini-bounded-availability.json`. The server retains the longer-run log in `reports/private/gemini-eval-20260918.log`. A separate live frontend-health investigation ended FAILED after 240.389 seconds with ReadTimeout and zero observations/actions. No production autonomous recovery was attempted. Backend autonomy is false and gateway autonomous grants are empty until a full intended-setting evaluation and live investigation pass.
+
+## Scripted fixtures — not model results
+
+The 18 September controller fixture rerun passed 8/8 without calling a reasoning model. It verifies orchestration only and does not change model acceptance.
+
+## Separate retrieval measurement
+
+Local all-minilm embeddings ingested 14 runbook chunks. Recall@4 was 13/14 (92.86%) at threshold 0.45, including after clarifying the generic runbook title. This small authored benchmark is not independent holdout accuracy. A verified manual production incident was indexed in Qdrant, but the query “Manual restart codeduel-frontend-1 verified recovery” retrieved no result at the same threshold. Retrieval remains partially accepted.

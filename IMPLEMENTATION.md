@@ -168,3 +168,33 @@ Release `aad5bc5ffd949710e1afc16ccf18cd6ff9c0e8d5` was committed on the Mac, pus
 Live frontend HTTP acceptance passed login, authenticated overview/history/topology and logout; unauthenticated overview returned401. Live overview returned15 signals and14 profiles; CodeDuel application health returned UNHEALTHY. The approved stateless `codeduel-frontend-1` restart executed once through frontend→backend→gateway, with persistent before-state, action and audit events. Its immediate container health was still starting, so verification correctly failed and the incident remained OPEN. The container became healthy shortly afterward. Unknown targets and a forbidden production stop returned409; replaying the approved action returned409 without another execution. Follow-up source adds bounded target-health polling and lets explicit Verify finish the same action without re-executing it; two regression tests cover those cases.
 
 All14 runbooks were ingested; the first retrieval rerun scored13/14 at the unchanged threshold0.45/top4. The generic application runbook title/symptom wording was clarified; the query and threshold were not changed. Gemini's intended-setting benchmark produced two failed cases with no diagnostic calls and approximately240s latency each before the overall600s command limit stopped it. This is provider failure evidence, not a passed model evaluation. Autonomous recovery remains disabled and its gateway grants are cleared pending acceptance. Cloudflare/systemd writes are removed from the production policy and the installer retires only this project's exact earlier polkit grant.
+
+## Final acceptance — 18 September 2026
+
+Source release `47ac1c3d18a2cf8e32f517ea3236d2a57523e722` passed the canonical deployment health gate. The following documentation-only release preserves this implementation. The deployed commit is recorded privately by `scripts/deploy.sh` in `reports/private/deployed-commit.txt`; image labels must match it.
+
+| Feature | Status | Evidence |
+|---|---|---|
+| Source validation | COMPLETED | 179 Python tests, 10 frontend tests, TypeScript and Next.js production build passed; secret scan zero findings. |
+| GitHub push | COMPLETED | Source and acceptance corrections pushed to main. |
+| Server deployment | COMPLETED | Canonical script completed; backup preserved; core components healthy. |
+| Revision parity | COMPLETED | Source release matched server and backend/frontend image labels; final documentation release rechecked during deployment. |
+| Tailscale remote access | COMPLETED | Mac reached 100.98.193.60:3080 and used authenticated dashboard endpoints. |
+| Authentication | COMPLETED | Unauthenticated overview401; login, overview/history/topology200; logout returned unauthenticated session. |
+| Private port isolation | COMPLETED | Mac could not connect to Tailscale ports18000,18081,15432,16333,11434. |
+| Server overview | COMPLETED | Authenticated overview returned15 signals and14 profiles. |
+| Live service status | COMPLETED | CodeDuel health correctly UNHEALTHY; five real container names matched policy. |
+| Live read-only investigation | NOT COMPLETED | Incident22ac1b79-3396-4ae4-a3a2-8f006bf3abd8 ended FAILED with ReadTimeout after240.389s, zero observations/actions. Direct gateway smoke separately passed25 checks, skipped2 requiring targets. |
+| RAG ingestion/retrieval | PARTIALLY COMPLETED | 14 chunks ingested; Recall@4=13/14 at0.45. Verified incident indexed, but tested history query missed. |
+| Manual production action | COMPLETED | One approved codeduel-frontend-1 restart, action e1857980-ce82-4084-b484-2e4900501aa0. |
+| Action verification | COMPLETED | Initial starting state failed safely; later explicit Verify returned PASSED and RESOLVED without another restart. |
+| Audit persistence | COMPLETED | Incident c8a6d4f7-a1a8-473c-9412-7a6ae715cf7c and five audit events survived deployment. |
+| Replay protection | COMPLETED | Reapproving the consumed action returned409; signed gateway ledger retained. |
+| Policy enforcement | COMPLETED | Unknown target and production stop rejected409. Installed write_services=[] and autonomous_actions={}; earlier exact polkit grant absent. |
+| Model evaluation | PARTIALLY COMPLETED | Full bounded availability run0/8: one timeout, seven429; intended-timeout suite stopped after two failed cases. Real reasoning acceptance unmet. |
+| Autonomous production recovery | NOT COMPLETED | Deliberately disabled in backend and gateway; no production autonomous experiment. |
+| Reboot/startup persistence | PARTIALLY COMPLETED | Gateway/Docker/Tailscale/cloudflared enabled and active; core containers unless-stopped; records survived redeployment. Host reboot not performed. |
+| CodeDuel regression check | COMPLETED | Homepage200, proxy health200, API500/unhealthy and other four healthy matched baseline. Existing API fault remains. |
+| Documentation | COMPLETED | README, implementation, deployment, security, architecture, model evaluation and interview reflect measured evidence and limitations. |
+
+**Overall production acceptance is not granted:** provider inference and full model acceptance remain blocked, retrieval has measured misses, and autonomous recovery remains disabled. The verified manual dashboard and constrained operations are available. No reboot, destructive storage operation, environment replacement or Cloudflare route change was performed.

@@ -6,11 +6,11 @@ The server deployment is at **http://100.98.193.60:3080** over Tailscale. Use th
 
 ## Remote access and daily operation
 
-On another computer signed into the same authorized tailnet, open `http://100.98.193.60:3080`. Log in with the `AIOPS_ADMIN_PASSWORD` from the server's private `.env` or the separately approved local handoff file. Open **Server overview** for host resources, container states, network health and configured application checks. Use **Investigate** to ask a question. For an approved direct operation, check the application, propose its exact Start or Restart action, review the current state, then approve it. The action and verification appear in incident history. This address was last verified on the older deployment; access from a second computer and this source revision still need live confirmation.
+On another computer signed into the same authorized tailnet, open `http://100.98.193.60:3080`. Log in with the `AIOPS_ADMIN_PASSWORD` from the server's private `.env` or the separately approved local handoff file. Open **Server overview** for host resources, container states, network health and configured application checks. Use **Investigate** to ask a question. For an approved direct operation, check the application, propose its exact Start or Restart action, review the current state, then approve it. The action and verification appear in incident history. Authenticated login, overview, history, topology and logout were verified from a separate Mac over Tailscale on 18 September 2026.
 
 From the server project directory, `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` starts HomeServerAI, `docker compose stop` stops its containers without removing volumes, `docker compose ps` shows status, and `docker compose restart backend frontend` restarts the application. The host gateway is managed separately with `sudo systemctl status aiops-gateway`, `sudo systemctl start aiops-gateway`, `sudo systemctl stop aiops-gateway`, or `sudo systemctl restart aiops-gateway`. See DEPLOYMENT.md for the guarded update path and logs.
 
-Autonomous recovery is disabled by default (`ENABLE_AUTONOMOUS_ACTIONS=false`) pending a passing real-model evaluation and live acceptance. An administrator can disable it again by setting that value in the private server `.env` and recreating the backend through the guarded deployment process; gateway target policy remains authoritative. If the page does not load, check Tailscale membership and `docker compose ps`; if login fails, check the private password and frontend logs; if diagnostics fail, check backend and gateway status. Do not repeatedly approve an uncertain action: inspect its recorded result and current target state first.
+Autonomous recovery is disabled by default (`ENABLE_AUTONOMOUS_ACTIONS=false`) pending a passing real-model evaluation and live acceptance. After a full real-model and live acceptance pass, enabling recovery requires both an administrator-reviewed exact container-only `autonomous_actions` subset and `ENABLE_AUTONOMOUS_ACTIONS=true`, followed by canonical deployment. Never grant host control-plane targets. An administrator can disable it again by setting that value in the private server `.env` and recreating the backend through the guarded deployment process; gateway target policy remains authoritative. If the page does not load, check Tailscale membership and `docker compose ps`; if login fails, check the private password and frontend logs; if diagnostics fail, check backend and gateway status. Do not repeatedly approve an uncertain action: inspect its recorded result and current target state first.
 
 ## How it works
 
@@ -40,7 +40,7 @@ The source now provides read-only exact HTTP/HTTPS, DNS, ping and configured TCP
 
 `check_application_health` runs the configured read-only checks for one service profile and its dependencies, reporting each component as `HEALTHY`, `UNHEALTHY`, or `UNKNOWN`. It is available to the agent and at `GET /api/applications/{application}/health`; it is a snapshot, not a complete user-journey test. The server overview exposes this breakdown, recent autonomous operations and direct operation proposals. `POST /api/operations/propose` remains an operator-approved path; autonomous investigations use a separate evidence-gated action path. A deliberate stop is never autonomous recovery, verifies only that exact target stopped, and never marks an incident resolved.
 
-The source now implements autonomous start and targeted restart for allowlisted CodeDuel containers and `cloudflared`, plus the existing operator-approved start/stop/restart path. The gateway policy exposes five recorded CodeDuel container names and `cloudflared`; Docker, SSH and Tailscale unit writes remain blocked. Autonomous policy requires current exact-target state evidence, rejects healthy-target restarts and repeated target attempts, and requires a configured target verification check. There is no bulk `restart_application` action, arbitrary shell, process kill, reboot, delete, firewall edit, or package-upgrade capability. Live server names and systemd authorization have not been rechecked in this source change because SSH authentication was unavailable.
+The deployed gateway allows operator-approved start/restart for the five exact CodeDuel containers and start/stop/restart for aiops-demo. Host service writes, including Cloudflare, are disabled. Autonomous dispatch is implemented but disabled in the backend and has no gateway grants because real-model acceptance has not passed. There is no arbitrary shell, bulk restart, process kill, reboot, delete, firewall edit or package-upgrade capability.
 
 ## Use
 
@@ -68,14 +68,14 @@ Agent: Dispatches once without routine approval, verifies Redis and application 
        records recovery evidence, marks resolved, saves local history.
 ```
 
-The earlier live acceptance used only `aiops-demo` and does not establish CodeDuel recovery quality. This new autonomous source/configuration has **not** been deployed or live-verified. The recorded production inventory supplies the five configured CodeDuel names, but a fresh SSH check was denied by authentication. The measured qwen2.5:3b result remains 0/8 correct root causes; Gemini has only a 1/1 synthetic smoke and previously hit quota. These limitations matter especially for autonomous operation; the deterministic policy narrows risk but does not make model reasoning reliable.
+Live acceptance on 18 September 2026 performed one approved CodeDuel frontend restart. Its audit persisted, replay was rejected, and follow-up verification resolved the incident without another restart. This proves the manual operation path; it does not establish autonomous recovery quality. The real-model gate remains unmet. See MODEL_EVALUATION.md and IMPLEMENTATION.md for measured results.
 
 ### Verification status of this expansion
 
-- **Implemented in source:** Bounded autonomous action path, per-target evidence and topology policy, one attempt per target per incident, signed one-use dispatch, exact-target verification, final application checks, audit and UI history.
-- **Configured in source:** Five CodeDuel containers and `cloudflared` are write targets; no Docker/SSH/Tailscale unit writes. Cloudflared start/restart has an exact-unit polkit rule for deployment.
-- **Locally verified:** Backend regression/autonomy tests and frontend build. No production workload was altered.
-- **Not deployed or live-verified:** Server access rejected available non-interactive SSH credentials; deployment, target-name freshness, host polkit behavior and practical autonomous smoke remain outstanding.
+- **Deployed:** Dashboard, diagnostics, exact approved CodeDuel actions, signed one-use dispatch, verification, audit and history.
+- **Validated:** 179 Python tests, 10 frontend tests, TypeScript and production build; authenticated access from the Mac; one approved production frontend restart.
+- **Disabled:** Autonomous recovery and all host service writes.
+- **Limitations:** Gemini investigation/evaluation reliability, imperfect runbook retrieval, and pre-existing CodeDuel API failure remain documented acceptance gaps.
 
 ## Repository
 
