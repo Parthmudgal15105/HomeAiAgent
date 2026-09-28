@@ -12,6 +12,8 @@ From the server project directory, `docker compose -f docker-compose.yml -f dock
 
 Autonomous recovery is disabled by default (`ENABLE_AUTONOMOUS_ACTIONS=false`) pending a passing real-model evaluation and live acceptance. After a full real-model and live acceptance pass, enabling recovery requires both an administrator-reviewed exact container-only `autonomous_actions` subset and `ENABLE_AUTONOMOUS_ACTIONS=true`, followed by canonical deployment. Never grant host control-plane targets. An administrator can disable it again by setting that value in the private server `.env` and recreating the backend through the guarded deployment process; gateway target policy remains authoritative. If the page does not load, check Tailscale membership and `docker compose ps`; if login fails, check the private password and frontend logs; if diagnostics fail, check backend and gateway status. Do not repeatedly approve an uncertain action: inspect its recorded result and current target state first.
 
+Latest actual-server result (28 September 2026): HomeServerAI services and the authenticated gateway registry deployed healthy, but the real local `qwen2.5:3b` model timed out before a first decision in all eight bounded incident scenarios at the 45-second limit. Recovery must remain disabled; see `MODEL_EVALUATION.md` for the separate mocked-controller and real-model results.
+
 ## How it works
 
 ```mermaid

@@ -2,6 +2,16 @@
 
 Status: production model gate not passed. These measurements are real Ollama CPU inference, but the initial four-case microbenchmark is not full incident accuracy.
 
+## 28 September 2026 actual home-server run
+
+Server revision `1575932` was deployed through the guarded deployment script. HomeServerAI backend, frontend, Ollama, Qdrant, PostgreSQL and the authenticated gateway registry were healthy. This run used the real server Ollama instance and `qwen2.5:3b`; it did **not** use mocked model responses. Safe recovery remained disabled.
+
+The first baseline incident failed after 245.76 seconds with two invalid structured decisions. After reducing the prompt to one bounded action and replacing the report-sized local response contract with `action`, `reason`, and schema-constrained `args`, the model produced valid decisions but initially selected an invalid endpoint; preserving only current per-tool argument constraints fixed that orchestration defect. The final eight-scenario run (`api_stopped`, `redis_down`, `mongodb_down`, `cloudflared_stopped`, `docker_daemon_down`, `disk_full`, `host_network_down`, `wifi_rfkill`) used a 45-second first-decision budget. All eight timed out before a first decision: 0/8 passed, 0 tool calls, 0 malformed JSON responses, 0 retries, 0 repeated/unnecessary calls, and no unsafe action attempts. Mean incident latency was 45.08 seconds.
+
+Classification: the packaging omissions and invalid target were **ORCHESTRATION** issues and are fixed; the final run is a **MODEL** latency/capability failure for this Qwen2.5:3b deployment. Prompt/context reduction cannot make this server/model combination meet the 45-second decision budget. The existing scripted fixture suite remains controller coverage only and must not be compared with this real-model result.
+
+The production image intentionally excludes test tooling and the frontend runtime image does not expose the development test runner, so the existing backend/gateway/frontend scripted suites could not be executed in-place on this server without creating a separate temporary test environment. The deployed service health checks did pass. The unrelated CodeDuel `/api/explore/problems` endpoint remained intermittently 500 and its API container unhealthy; it is outside HomeServerAI and did not change this classification.
+
 ## 28 September 2026 reliability guardrails
 
 The local-source controller now uses a compact prompt view for tools/topology, keeps the full response schema for validation, caps default Ollama output at 384 tokens, and rejects an estimated prompt-plus-output request above the configured context window before calling Ollama. A representative checked-in production registry measured approximately 7,515 estimated input tokens plus 384 output tokens against `OLLAMA_NUM_CTX=8192`; this is a guardrail estimate, not a successful inference measurement. RAG retrieval is deferred until initial observation evidence by default to avoid evicting the CPU reasoning model.
