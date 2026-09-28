@@ -5,6 +5,7 @@ COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --timeout 120 --retries 5 -r backend/requirements.txt && useradd --uid 10001 --create-home aiops
 COPY backend /app/backend
 COPY evals /app/evals
+COPY diagnostic_gateway /app/diagnostic_gateway
 RUN chown -R aiops:aiops /app
 USER aiops
 ARG APP_REVISION=unknown
