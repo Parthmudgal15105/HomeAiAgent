@@ -46,6 +46,7 @@ CLASSIFICATION_PROMPT = '''Classify this infrastructure incident. Return JSON on
 category: http_service|container|process|systemd_service|network|disk|database|unknown.
 target: named affected host, container, process, service, or empty.
 symptom: short restatement. confidence: 0 to 1.
+Redis or BullMQ queue failures are category=container with target=redis.
 Do not select tools or propose actions.'''
 
 
