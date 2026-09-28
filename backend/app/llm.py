@@ -31,6 +31,7 @@ RULES:
 - Never invent results.
 - Never repeat completed checks.
 - Prefer the cheapest diagnostic that reduces uncertainty.
+- For queue or job-processing symptoms while the site remains reachable, inspect the worker logs before resource statistics.
 - Choose one tool only.
 - If enough evidence exists, STOP.
 - If no tool can investigate further, ESCALATE.
