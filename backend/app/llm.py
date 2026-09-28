@@ -106,17 +106,29 @@ def ollama_action_schema(context: dict) -> dict:
     avoids asking a small local model to emit an entire incident report at every
     diagnostic step.
     """
-    actions = [tool['name'] for tool in context.get('tools', []) if tool.get('risk_level') == 'READ_ONLY']
-    return {
-        'type': 'object',
-        'properties': {
-            'action': {'type': 'string', 'enum': [*actions, 'STOP', 'ESCALATE']},
-            'reason': {'type': 'string', 'minLength': 3, 'maxLength': 180},
-            'args': {'type': 'object'},
-        },
-        'required': ['action', 'reason', 'args'],
-        'additionalProperties': False,
-    }
+    from .context import compact_schema
+    reason = {'type': 'string', 'minLength': 3, 'maxLength': 180}
+    variants = []
+    for tool in context.get('tools', []):
+        if tool.get('risk_level') != 'READ_ONLY':
+            continue
+        parameters = remaining_parameters(tool, context.get('observations', []))
+        if parameters is None:
+            continue
+        variants.append({
+            'type': 'object',
+            'properties': {'action': {'type': 'string', 'const': tool['name']}, 'reason': reason,
+                           'args': compact_schema(parameters)},
+            'required': ['action', 'reason', 'args'], 'additionalProperties': False,
+        })
+    for action in ('STOP', 'ESCALATE'):
+        variants.append({
+            'type': 'object',
+            'properties': {'action': {'type': 'string', 'const': action}, 'reason': reason,
+                           'args': {'type': 'object', 'maxProperties': 0}},
+            'required': ['action', 'reason', 'args'], 'additionalProperties': False,
+        })
+    return {'anyOf': variants}
 
 
 def parse_ollama_action(content: str, context: dict) -> Decision:
