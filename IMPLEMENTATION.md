@@ -10,6 +10,13 @@
 
 The dated material below is historical and describes the last verified deployment, not the new local source.
 
+## 28 September 2026 local reliability update
+
+- **Implemented and locally tested:** named model/tool/infrastructure failure categories; persisted per-step/model/tool/RAG timing; explicit model-call budget; one-decision model deadline; deferred RAG retrieval; capability-gap escalation; compact Ollama prompt context with an 8,192-token preflight guard; exact-target recovery preconditions; and bounded Atlas SRV/DNS/TCP/TLS reachability diagnostics without credentials.
+- **Implemented and contract-tested:** production-policy-derived synthetic gateway schemas and a 15-scenario incident/recovery scaffold. The scaffold validates tools, target enums, topology health checks, recovery targets, Atlas support, and the absence of autonomous grants against `config/gateway.json`; it is not a live incident run or a model-accuracy result.
+- **Not live verified:** this source was not deployed; the dashboard was observed only at its sign-in boundary. No credentials were entered, no live model request was issued, and no production action or external Atlas probe was performed.
+- See `FAILURE_MODES.md` for the runtime taxonomy and escalation semantics. Historical claims below retain their original dates and should not be treated as evidence for this source revision.
+
 Last verified: 13 September 2026, 07:54 UTC. **Overall status: incomplete; the Gemini-enabled deployment is healthy and the integration passes locally, but deployed generations are temporarily blocked by the supplied key's free-tier request quota.**
 
 ## Source and deployment identity

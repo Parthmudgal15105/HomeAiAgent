@@ -12,7 +12,24 @@ from conftest import REGISTRY
 
 def diagnose(agent, incident_id):
     oid = agent.record_observation(incident_id, 'docker_inspect', {'container': 'sandbox'}, {'ok': True, 'result': {'state': 'exited'}})
-    agent.save_diagnosis(incident_id, Decision(decision_type='DIAGNOSIS', root_cause='Sandbox container exited', confidence=.99, evidence_observation_ids=[oid], summary='Container is stopped.', remediation=[Remediation(tool='restart_container', arguments={'container': 'sandbox'}, reason='Restore the sandbox process')]), REGISTRY)
+    agent.save_diagnosis(incident_id, Decision(decision_type='DIAGNOSIS', root_cause='Sandbox container exited', confidence=.99, evidence_observation_ids=[oid], summary='Container is stopped.', remediation=[Remediation(tool='start_container', arguments={'container': 'sandbox'}, reason='Restore the sandbox process')]), REGISTRY)
+
+
+def test_model_recovery_proposal_must_match_exact_target_state(system):
+    _, sessions, _, agent, _, incident_id = system
+    oid = agent.record_observation(incident_id, 'docker_inspect', {'container': 'sandbox'},
+                                   {'ok': True, 'result': {'state': 'exited'}})
+    agent.save_diagnosis(
+        incident_id,
+        Decision(decision_type='DIAGNOSIS', root_cause='Sandbox exited', confidence=.8,
+                 evidence_observation_ids=[oid], summary='Stopped.',
+                 remediation=[Remediation(tool='restart_container', arguments={'container': 'sandbox'}, reason='Wrong action')]),
+        REGISTRY,
+    )
+    with sessions() as session:
+        incident = session.get(Incident, incident_id)
+        assert not incident.actions
+        assert 'Restart proposal' in incident.agent_state['remediation_not_executable'][0]['message']
 
 
 @pytest.mark.asyncio
@@ -36,7 +53,7 @@ async def test_approval_is_persisted_and_recovery_checked(system):
     assert gateway.calls[0][2]['executed_at']
     with pytest.raises(ValueError):
         await service.approve(action_id)
-    assert len([c for c in gateway.calls if c[0] == 'restart_container']) == 1
+    assert len([c for c in gateway.calls if c[0] == 'start_container']) == 1
 
 
 @pytest.mark.asyncio
@@ -47,7 +64,7 @@ async def test_concurrent_approvals_execute_at_most_once(system):
         action_id = session.get(Incident, incident_id).actions[0].id
     results = await asyncio.gather(service.approve(action_id), service.approve(action_id), return_exceptions=True)
     assert sum(isinstance(r, ValueError) for r in results) == 1
-    assert len([c for c in gateway.calls if c[0] == 'restart_container']) == 1
+    assert len([c for c in gateway.calls if c[0] == 'start_container']) == 1
 
 
 @pytest.mark.asyncio
@@ -110,7 +127,7 @@ async def test_later_verify_updates_failed_action_without_replaying_write(system
     assert result['verified'] is True
     with sessions() as session:
         assert session.get(Action, action_id).verification_status == 'PASSED'
-    assert not any(tool == 'restart_container' for tool, _, _ in gateway.calls)
+    assert not any(tool == 'start_container' for tool, _, _ in gateway.calls)
 
 
 @pytest.mark.asyncio

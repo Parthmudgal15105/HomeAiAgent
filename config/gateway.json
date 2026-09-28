@@ -83,6 +83,13 @@
       "port": 22
     }
   ],
+  "atlas_seeds": [
+    {
+      "seed": "cluster0.etfzpvb.mongodb.net",
+      "shard_hostname_suffix": "etfzpvb.mongodb.net",
+      "port": 27017
+    }
+  ],
   "disk_paths": [
     "/",
     "/storage"

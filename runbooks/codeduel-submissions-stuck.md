@@ -14,7 +14,7 @@ The host `service_status("docker")` and application Docker tools inspect the hos
 
 ## Safe remediation
 
-Repair the evidenced dependency before restarting the worker. Any allowlisted container change needs an enabled policy and an exact approved action; writes are currently disabled. Do not flush Redis, delete jobs, remove volumes, or recreate the judge socket. Investigate Atlas access with an operator when current tools cannot discriminate the cause.
+Repair the evidenced dependency before restarting the worker. Any allowlisted container change needs enabled policy, fresh exact-target evidence, and an exact approved action; autonomous recovery remains disabled. Do not flush Redis, delete jobs, remove volumes, or recreate the judge socket. Use the bounded Atlas reachability diagnostic for SRV/DNS/TLS evidence, then escalate provider, credential, queue, or judge-runtime causes that the current tools cannot discriminate.
 
 ## Verification
 

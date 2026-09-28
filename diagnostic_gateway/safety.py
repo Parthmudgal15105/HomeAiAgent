@@ -29,6 +29,10 @@ import dns.resolver
 class ToolError(Exception):
     """Expected safe diagnostic failure; no traceback is sent to the model."""
 
+    def __init__(self, message: str, *, error_code: str | None = None) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
 
 class ApprovalError(ToolError):
     pass
@@ -154,6 +158,134 @@ def resolve_addresses(host: str, lifetime: float = 3.0) -> list[str]:
     if not addresses:
         raise ToolError(f"No A/AAAA addresses resolved for {host}")
     return sorted(set(addresses))[:16]
+
+
+def hostname_matches_suffix(hostname: str, suffix: str) -> bool:
+    """Require a DNS name to be a child of one exact configured suffix."""
+    target = hostname.lower().rstrip(".")
+    boundary = suffix.lower().rstrip(".")
+    return bool(target and boundary and target != boundary and target.endswith("." + boundary))
+
+
+def resolve_srv_records(host: str, lifetime: float = 3.0) -> list[dict[str, int | str]]:
+    """Resolve a bounded MongoDB SRV query without accepting a URI or hostname input from a caller."""
+    resolver = dns.resolver.Resolver()
+    lifetime = min(max(float(lifetime), 0.001), 5.0)
+    resolver.lifetime = lifetime
+    try:
+        answers = resolver.resolve(f"_mongodb._tcp.{host}", "SRV", lifetime=lifetime)
+    except dns.resolver.NXDOMAIN as exc:
+        raise ToolError("Atlas SRV record was not found", error_code="ATLAS_SRV_NOT_FOUND") from exc
+    except dns.resolver.NoAnswer as exc:
+        raise ToolError("Atlas SRV record was not returned", error_code="ATLAS_SRV_NOT_FOUND") from exc
+    except dns.exception.Timeout as exc:
+        raise ToolError("Atlas SRV lookup timed out", error_code="ATLAS_SRV_TIMEOUT") from exc
+    except dns.resolver.NoNameservers as exc:
+        raise ToolError("Atlas DNS servers were unavailable", error_code="ATLAS_SRV_DNS_UNAVAILABLE") from exc
+    except dns.exception.DNSException as exc:
+        raise ToolError("Atlas SRV lookup failed", error_code="ATLAS_SRV_DNS_FAILURE") from exc
+    records = [
+        {
+            "hostname": str(answer.target).rstrip(".").lower(),
+            "port": int(answer.port),
+            "priority": int(answer.priority),
+            "weight": int(answer.weight),
+        }
+        for answer in answers
+    ]
+    if not records:
+        raise ToolError("Atlas SRV record was not returned", error_code="ATLAS_SRV_NOT_FOUND")
+    # Keep the network work deterministic even if a resolver returns duplicate
+    # records in a different order across queries.
+    unique = {(item["hostname"], item["port"], item["priority"], item["weight"]): item for item in records}
+    return sorted(unique.values(), key=lambda item: (int(item["priority"]), str(item["hostname"]), int(item["port"]), int(item["weight"])))
+
+
+def resolve_atlas_shard_addresses(hostname: str, *, suffix: str, lifetime: float = 3.0) -> list[str]:
+    """Resolve a permitted Atlas shard hostname and reject non-public answers."""
+    if not hostname_matches_suffix(hostname, suffix):
+        raise ToolError("Atlas SRV target is outside the configured shard hostname suffix", error_code="ATLAS_SRV_TARGET_NOT_ALLOWED")
+    resolver = dns.resolver.Resolver()
+    lifetime = min(max(float(lifetime), 0.001), 5.0)
+    resolver.lifetime = lifetime
+    deadline = time.monotonic() + lifetime
+    addresses: list[str] = []
+    timed_out = False
+    for record in ("A", "AAAA"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
+        try:
+            addresses.extend(str(answer) for answer in resolver.resolve(hostname, record, lifetime=remaining))
+        except dns.exception.Timeout:
+            timed_out = True
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers):
+            continue
+        except dns.exception.DNSException as exc:
+            raise ToolError("Atlas shard hostname lookup failed", error_code="ATLAS_SHARD_DNS_FAILURE") from exc
+    if not addresses:
+        code = "ATLAS_SHARD_DNS_TIMEOUT" if timed_out else "ATLAS_SHARD_DNS_NOT_FOUND"
+        raise ToolError("Atlas shard hostname did not resolve to A/AAAA addresses", error_code=code)
+    normalized = sorted(set(addresses))[:4]
+    # Reject a complete mixed answer rather than selecting a public address from
+    # a possibly rebinding DNS response.
+    if not all(safe_address(address) for address in normalized):
+        raise ToolError("Atlas shard hostname resolved outside the public network scope", error_code="ATLAS_ADDRESS_NOT_ALLOWED")
+    return normalized
+
+
+def atlas_tls_probe(hostname: str, address: str, *, port: int = 27017, timeout: float = 3.0) -> dict[str, Any]:
+    """Use a pinned numeric address for one bounded TCP and verified TLS handshake."""
+    if port != 27017:
+        raise ToolError("Atlas TCP port is not allowed", error_code="ATLAS_PORT_NOT_ALLOWED")
+    if not safe_address(address):
+        raise ToolError("Atlas destination address is outside the public network scope", error_code="ATLAS_ADDRESS_NOT_ALLOWED")
+    timeout = min(max(float(timeout), 0.001), 5.0)
+    started = time.monotonic()
+    deadline = started + timeout
+    raw_socket: socket.socket | None = None
+    tls_socket: ssl.SSLSocket | None = None
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("Atlas connectivity probe exceeded its deadline")
+        return value
+
+    try:
+        ip = ipaddress.ip_address(address)
+        raw_socket = socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET, socket.SOCK_STREAM)
+        raw_socket.settimeout(remaining())
+        try:
+            raw_socket.connect((address, port))
+        except (TimeoutError, socket.timeout) as exc:
+            return {"address": address, "port": port, "tcp_reachable": False, "tcp_latency_ms": round((time.monotonic() - started) * 1000), "tls_reachable": False, "tls_latency_ms": None, "error_code": "ATLAS_TCP_TIMEOUT", "error": str(redact(str(exc)))[:300] or "TCP connection timed out"}
+        except OSError as exc:
+            return {"address": address, "port": port, "tcp_reachable": False, "tcp_latency_ms": round((time.monotonic() - started) * 1000), "tls_reachable": False, "tls_latency_ms": None, "error_code": "ATLAS_TCP_CONNECT_FAILED", "error": str(redact(str(exc)))[:300] or "TCP connection failed"}
+        tcp_latency_ms = round((time.monotonic() - started) * 1000)
+        try:
+            raw_socket.settimeout(remaining())
+            # Default context both verifies the Atlas certificate and sends SNI
+            # for the validated shard hostname.  The numeric address is used
+            # only for the underlying socket, preventing a second DNS lookup.
+            tls_socket = ssl.create_default_context().wrap_socket(raw_socket, server_hostname=hostname)
+        except (TimeoutError, socket.timeout) as exc:
+            return {"address": address, "port": port, "tcp_reachable": True, "tcp_latency_ms": tcp_latency_ms, "tls_reachable": False, "tls_latency_ms": round((time.monotonic() - started) * 1000), "error_code": "ATLAS_TLS_TIMEOUT", "error": str(redact(str(exc)))[:300] or "TLS handshake timed out"}
+        except ssl.SSLCertVerificationError as exc:
+            return {"address": address, "port": port, "tcp_reachable": True, "tcp_latency_ms": tcp_latency_ms, "tls_reachable": False, "tls_latency_ms": round((time.monotonic() - started) * 1000), "error_code": "ATLAS_TLS_CERTIFICATE_FAILED", "error": str(redact(str(exc)))[:300] or "TLS certificate verification failed"}
+        except ssl.SSLError as exc:
+            return {"address": address, "port": port, "tcp_reachable": True, "tcp_latency_ms": tcp_latency_ms, "tls_reachable": False, "tls_latency_ms": round((time.monotonic() - started) * 1000), "error_code": "ATLAS_TLS_HANDSHAKE_FAILED", "error": str(redact(str(exc)))[:300] or "TLS handshake failed"}
+        except OSError as exc:
+            return {"address": address, "port": port, "tcp_reachable": True, "tcp_latency_ms": tcp_latency_ms, "tls_reachable": False, "tls_latency_ms": round((time.monotonic() - started) * 1000), "error_code": "ATLAS_TLS_HANDSHAKE_FAILED", "error": str(redact(str(exc)))[:300] or "TLS handshake failed"}
+        return {"address": address, "port": port, "tcp_reachable": True, "tcp_latency_ms": tcp_latency_ms, "tls_reachable": True, "tls_latency_ms": round((time.monotonic() - started) * 1000), "error_code": None, "error": None}
+    except TimeoutError as exc:
+        return {"address": address, "port": port, "tcp_reachable": False, "tcp_latency_ms": round((time.monotonic() - started) * 1000), "tls_reachable": False, "tls_latency_ms": None, "error_code": "ATLAS_PROBE_TIMEOUT", "error": str(redact(str(exc)))[:300]}
+    finally:
+        if tls_socket is not None:
+            tls_socket.close()
+        elif raw_socket is not None:
+            raw_socket.close()
 
 
 def safe_address(address: str, *, local_target: bool = False, container_target: bool = False) -> bool:

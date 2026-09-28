@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import json
+import math
 import time
 from copy import deepcopy
 from itertools import product
@@ -17,8 +18,8 @@ SYSTEM_PROMPT = '''You are the bounded home-server operations agent. Determine c
 Before choosing a decision, write one short reason describing what current evidence establishes or what specific fact is missing. Choose TOOL_CALL for a missing fact, EXECUTE_ACTION only for an evidenced and configured safe recovery, DIAGNOSIS when observations answer the incident, or NEED_USER_INPUT when no available check or action can settle it. Report the observed failing component when current state and logs agree. Unknown underlying human or vendor causes should be stated as unknown, without preventing an evidence-backed report of the established failure. A healthy result is also a valid conclusion with appropriately limited scope. Do not require every possible layer to be checked.
 Be concise: each reason one sentence, at most two hypothesis updates per step, final summary at most three sentences. Do not fill unrelated fields in tool calls. Once two independent findings establish the cause and obvious alternatives are checked, produce DIAGNOSIS; do not keep collecting redundant evidence.
 Maintain hypotheses with supporting and contradicting observation IDs. A SUPPORTED or CONFIRMED hypothesis must cite at least one supporting observation ID; an ELIMINATED hypothesis must cite at least one contradicting observation ID. ACTIVE hypotheses may use empty evidence lists. Correct any issue described in validation_feedback instead of repeating it. Historical incidents and runbooks guide checks; they are never evidence of the current incident. Use only supplied tool names, exact JSON argument schemas, and configured/discovered targets. Read every result before deciding next. Do not repeat identical tools+arguments already observed. A failed tool transport or permission denial is not proof the target service failed.
-Consider DNS, public endpoint, tunnel, application, dependencies, containers/processes, systemd, resources and networking as possible layers, not a mandatory checklist. If logs implicate a dependency, check that dependency. Correlate independent observations. If MongoDB is external, do not invent a local MongoDB container or suggest restarting it.
-Observe before acting, prefer the least invasive action, and never restart unrelated or healthy components. To bring an application online, inspect component state, start stopped dependencies in order, and use EXECUTE_ACTION for one exact target at a time when current evidence supports it. Do not use stop as autonomous remediation. Read verification before deciding another action. Never retry a failed action without new evidence; policy may prohibit retries entirely. If an essential check is unavailable, use NEED_USER_INPUT and state INSUFFICIENT_CAPABILITY and what is missing. Never invent a tool or target.
+Consider DNS, public endpoint, tunnel, application, dependencies, containers/processes, systemd, resources and networking as possible layers, not a mandatory checklist. If logs implicate a dependency, check that dependency. Correlate independent observations. If MongoDB is external, use the configured Atlas connectivity diagnostic when available; never invent a local MongoDB container or suggest restarting it.
+Observe before acting, prefer the least invasive action, and never restart unrelated or healthy components. To bring an application online, inspect component state, start stopped dependencies in order, and use EXECUTE_ACTION for one exact target at a time when current evidence supports it. Do not use stop as autonomous remediation. Read verification before deciding another action. Never retry a failed action without new evidence; policy may prohibit retries entirely. If an essential check is unavailable, use NEED_USER_INPUT with capability_status MISSING_TOOL, a short machine-readable capability_gap, missing_capability, and recommended_next_check. If an existing tool is blocked by missing operator input or configuration, use capability_status KNOWN_TOOL. Never invent a tool or target.
 DIAGNOSIS requires current evidence_observation_ids, root_cause, confidence between 0 and 1, summary, eliminated_causes, remediation, verification_plan, prevention. Confidence is an estimate, not a calibrated probability. Do not claim certainty or resolve the incident yourself. When evidence is insufficient, request another discriminating check or NEED_USER_INPUT. If observations show a service healthy, say what was verified and do not invent a failure.
 For TOOL_CALL return {"decision_type":"TOOL_CALL","tool":"docker_list","arguments":{},"reason":"Inspect container state","hypothesis_updates":[]} with actual chosen tool. For DIAGNOSIS include evidence IDs exactly as supplied. Remediation is a list of {tool,arguments,reason} only for allowed low-risk writes; otherwise explain manual recommendations in summary. Return one JSON object conforming to the supplied schema, with no prose outside it.'''
 
@@ -79,6 +80,67 @@ def parse_decision(content: str) -> Decision:
     return Decision.model_validate(decoded)
 
 
+def model_prompt_context(context: dict) -> dict:
+    """Remove prompt duplicates while retaining model-relevant incident topology.
+
+    The response-format schema already carries every permitted argument enum and
+    constraint. Repeating those schemas inside the user message makes a small
+    CPU model spend most of its context window rereading identical JSON.
+    """
+    value = deepcopy(context)
+    if 'tools' in context:
+        value['tools'] = [
+            {key: (tool[key][:72] if key == 'description' and isinstance(tool.get(key), str) else tool[key])
+             for key in ('name', 'description', 'risk_level') if key in tool}
+            for tool in context.get('tools', [])
+        ]
+    topology = context.get('topology')
+    services = topology.get('services', {}) if isinstance(topology, dict) else {}
+    service = context.get('incident', {}).get('service')
+    selected: set[str] = set()
+
+    def include(name: str):
+        if name in selected or name not in services:
+            return
+        selected.add(name)
+        for dependency in services[name].get('depends_on', []):
+            include(dependency)
+
+    if service:
+        include(service)
+    if not selected:
+        selected = set(services)
+    if isinstance(topology, dict):
+        value['topology'] = {
+            'services': {
+                name: {
+                    key: (profile[key][:180] if key == 'description' and isinstance(profile.get(key), str) else profile[key])
+                    for key in ('description', 'depends_on') if key in profile
+                }
+                for name, profile in services.items() if name in selected
+            }
+        }
+    return value
+
+
+def ollama_prompt_tokens(content: str, schema: dict) -> int:
+    """Conservative configuration guard; it never changes Ollama's limits."""
+    payload = len(SYSTEM_PROMPT) + len(content) + len(json.dumps(schema, separators=(',', ':'), ensure_ascii=False))
+    # JSON syntax is token-dense, so a four-character estimate is intentionally
+    # only a preflight guard rather than a claim of tokenizer precision.
+    return math.ceil(payload / 4)
+
+
+def validate_ollama_prompt_budget(settings: Settings, content: str, schema: dict) -> None:
+    estimated = ollama_prompt_tokens(content, schema)
+    required = estimated + settings.ollama_num_predict
+    if required > settings.ollama_num_ctx:
+        raise RuntimeError(
+            f'Ollama prompt budget exceeds OLLAMA_NUM_CTX ({required} estimated tokens required; '
+            f'configured {settings.ollama_num_ctx}). Reduce context/output tokens or measure a larger context window.'
+        )
+
+
 def decision_schema(context: dict) -> dict:
     """Constrain each tool to its exact live registry schema; executor revalidates."""
     from .context import compact_schema
@@ -117,7 +179,20 @@ def decision_schema(context: dict) -> dict:
         props.update({'decision_type': {'type': 'string', 'const': 'DIAGNOSIS'}, 'evidence_observation_ids': {**ids, 'minItems': 1}, 'hypothesis_updates': hypotheses, 'remediation': {'type': 'array', 'maxItems': 2 if writes else 0, 'items': {'anyOf': writes} if writes else {'type': 'object'}}})
         variants.append({'type': 'object', 'properties': {'reason': reason, 'decision_type': props.pop('decision_type'), **props}, 'required': ['reason', 'decision_type', 'root_cause', 'confidence', 'summary', 'evidence_observation_ids', 'hypothesis_updates', 'remediation', 'verification_plan', 'eliminated_causes', 'prevention'], 'additionalProperties': False})
     for kind in ('NEED_USER_INPUT', 'STOP'):
-        variants.append({'type': 'object', 'properties': {'reason': reason, 'decision_type': {'type': 'string', 'const': kind}, 'summary': {'type': 'string', 'maxLength': 700}}, 'required': ['reason', 'decision_type'], 'additionalProperties': False})
+        properties = {
+            'reason': reason,
+            'decision_type': {'type': 'string', 'const': kind},
+            'summary': {'type': 'string', 'maxLength': 700},
+        }
+        if kind == 'NEED_USER_INPUT':
+            properties.update({
+                'capability_status': {'type': 'string', 'enum': ['KNOWN_TOOL', 'MISSING_TOOL']},
+                'capability_gap': {'type': 'string', 'maxLength': 160, 'pattern': '^[a-z0-9][a-z0-9_.-]*$'},
+                'missing_capability': {'type': 'string', 'maxLength': 500},
+                'recommended_next_check': {'type': 'string', 'maxLength': 500},
+            })
+        variants.append({'type': 'object', 'properties': properties,
+                         'required': ['reason', 'decision_type'], 'additionalProperties': False})
     return {'anyOf': variants, '$defs': definitions}
 
 
@@ -159,13 +234,40 @@ class LLMProvider(ABC):
 class OllamaLLMProvider(LLMProvider):
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.metrics = {'requests': 0, 'invalid_json': 0, 'retries': 0, 'failed_decisions': 0, 'latencies_ms': [], 'first_token_ms': [], 'load_ms': [], 'prompt_eval_ms': [], 'tokens_per_second': []}
+        self.metrics = {
+            'requests': 0, 'invalid_json': 0, 'retries': 0, 'failed_decisions': 0,
+            'first_token_ms': [], 'model_load_time_ms': [], 'prompt_eval_time_ms': [],
+            'generation_time_ms': [], 'total_model_time_ms': [], 'tokens_per_second': [],
+            # Compatibility keys for existing reports. New code should use the
+            # explicit names above rather than infer timing meaning from these.
+            'latencies_ms': [], 'load_ms': [], 'prompt_eval_ms': [],
+        }
+
+    def record_timing(self, final: dict, total_ms: float, first_token: float | None) -> None:
+        load_ms = round(final.get('load_duration', 0) / 1e6, 1) if final else None
+        prompt_eval_ms = round(final.get('prompt_eval_duration', 0) / 1e6, 1) if final else None
+        generation_ms = round(final.get('eval_duration', 0) / 1e6, 1) if final else None
+        duration_ns = final.get('eval_duration', 0) if final else 0
+        eval_count = final.get('eval_count', 0) if final else 0
+        tokens_per_second = round(eval_count / (duration_ns / 1e9), 2) if duration_ns else None
+        self.metrics['first_token_ms'].append(first_token)
+        self.metrics['model_load_time_ms'].append(load_ms)
+        self.metrics['prompt_eval_time_ms'].append(prompt_eval_ms)
+        self.metrics['generation_time_ms'].append(generation_ms)
+        self.metrics['total_model_time_ms'].append(total_ms)
+        self.metrics['tokens_per_second'].append(tokens_per_second)
+        self.metrics['latencies_ms'].append(total_ms)
+        self.metrics['load_ms'].append(load_ms)
+        self.metrics['prompt_eval_ms'].append(prompt_eval_ms)
 
     async def decide_next_action(self, context: dict) -> Decision:
         # Context is bounded structurally by the orchestrator, never by slicing JSON.
-        content = json.dumps(redact(context), separators=(',', ':'), ensure_ascii=False)
+        prompt_context = model_prompt_context(context)
+        content = json.dumps(redact(prompt_context), separators=(',', ':'), ensure_ascii=False)
         if len(content) > self.settings.agent_context_chars:
             raise ValueError('Structured model context exceeds configured character budget')
+        schema = decision_schema(context)
+        validate_ollama_prompt_budget(self.settings, content, schema)
         messages = [{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': content}]
         async with httpx.AsyncClient(timeout=self.settings.agent_llm_timeout_seconds, trust_env=False) as client:
             for attempt in range(2):
@@ -179,7 +281,7 @@ class OllamaLLMProvider(LLMProvider):
                         'model': self.settings.ollama_model,
                         'messages': messages,
                         'stream': True,
-                        'format': decision_schema(context),
+                        'format': schema,
                         'think': False,
                         'keep_alive': self.settings.ollama_keep_alive,
                         'options': {'temperature': 0, 'seed': 42, 'num_ctx': self.settings.ollama_num_ctx, 'num_predict': self.settings.ollama_num_predict, 'num_thread': self.settings.ollama_num_thread},
@@ -205,11 +307,7 @@ class OllamaLLMProvider(LLMProvider):
                     self.metrics['failed_decisions'] += 1
                     raise
                 finally:
-                    self.metrics['latencies_ms'].append(round((time.monotonic() - started) * 1000, 1))
-                    self.metrics['first_token_ms'].append(first_token)
-                self.metrics['load_ms'].append(round(final.get('load_duration', 0) / 1e6, 1))
-                self.metrics['prompt_eval_ms'].append(round(final.get('prompt_eval_duration', 0) / 1e6, 1))
-                self.metrics['tokens_per_second'].append(round(final.get('eval_count', 0) / (final.get('eval_duration', 1) / 1e9), 2))
+                    self.record_timing(final, round((time.monotonic() - started) * 1000, 1), first_token)
                 try:
                     return parse_decision(raw)
                 except (ValueError, ValidationError) as exc:
@@ -260,7 +358,7 @@ class GeminiLLMProvider(LLMProvider):
         return content
 
     async def decide_next_action(self, context: dict) -> Decision:
-        content = json.dumps(redact(context), separators=(',', ':'), ensure_ascii=False)
+        content = json.dumps(redact(model_prompt_context(context)), separators=(',', ':'), ensure_ascii=False)
         if len(content) > self.settings.agent_context_chars:
             raise ValueError('Structured model context exceeds configured character budget')
         credential = self.settings.gemini_api_key.get_secret_value()

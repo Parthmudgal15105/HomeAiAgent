@@ -4,6 +4,7 @@ Run from the repository root after installing `backend/requirements-dev.txt`:
 
 ```bash
 python -m pytest -q evals/test_scenarios.py
+python -m pytest -q evals/test_production_contract.py
 python -m evals.run
 python -m evals.run --provider ollama --model qwen2.5:3b
 python -m evals.run --provider gemini --model gemini-3.8-flash
@@ -46,7 +47,7 @@ The dataset has eight independent cases:
 | --- | --- |
 | `api_stopped` | API container exited; dependencies remain healthy |
 | `redis_down` | Worker BullMQ connection errors; Redis port unavailable and container exited |
-| `mongodb_down` | API MongoDB connection failures; MongoDB unavailable |
+| `mongodb_down` | API Atlas connection failures; bounded Atlas reachability probe fails |
 | `cloudflared_stopped` | Healthy local API; inactive Cloudflare Tunnel service |
 | `docker_daemon_down` | Docker API failure and inactive Docker systemd service |
 | `disk_full` | Filesystem at 99.5% and application `ENOSPC` logs |
@@ -59,6 +60,19 @@ evaluation data. They do not override the discovered production topology.
 shell tools and metadata URLs, and refuses all write execution even if an
 approval object is supplied. No tests stop real services, fill disks, or change
 Wi-Fi. `RedisDownScenario()` is available as a convenience mock.
+
+`test_production_contract.py` is a separate, read-only deployment-policy
+contract. It constructs the same gateway metadata that production exposes from
+`config/gateway.json`, verifies each configured topology health check through
+both gateway JSON Schema and the backend allowlist, and validates safe scenario
+scaffolding for the requested incident classes. The synthetic mock derives its
+tool argument grammar from that metadata while substituting only fictional
+fixture targets. This catches drift such as a renamed tool argument, a flat
+Docker inspection fixture, an unapproved target, or a topology check that the
+deployed gateway would reject. No contract test makes an HTTP, Docker, DNS, or
+Atlas call. The Atlas scaffold also retains an explicit `MISSING_TOOL` /
+`mongodb_atlas_connectivity` escalation path for a deployment that does not
+expose the bounded Atlas diagnostic.
 
 Each run saves a timestamped JSON file in `evals/results/` containing the fixture
 hash, provider/model label, observations, decisions, hypotheses, report, timing,
@@ -85,7 +99,7 @@ diagnosis-only suite because retrieval and approved writes are disabled. They
 require separate retrieval and remediation tests; reporting zero or 100% here
 would be misleading.
 
-Initial local validation on 2026-09-09: 13 tests passed; all eight scripted cases
-passed with 2.875 average tools, zero irrelevant/repeated calls, and valid
-current evidence citations in every case. This validates deterministic
-orchestration only. See an Ollama- or Gemini-mode report for measured model quality.
+Latest local scripted validation on 2026-09-28: all eight cases passed with
+2.75 average tools, zero irrelevant/repeated calls, and valid current evidence
+citations in every case. This validates deterministic orchestration only. See
+an Ollama- or Gemini-mode report for measured model quality.

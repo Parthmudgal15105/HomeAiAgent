@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from diagnostic_gateway.config import GatewayConfig, utilization_severity
 from diagnostic_gateway.main import create_app
-from diagnostic_gateway.safety import ApprovalError, ApprovalLedger, CommandResult, ToolError, approval_signature, http_probe, redact, run_command, safe_address
+from diagnostic_gateway.safety import ApprovalError, ApprovalLedger, CommandResult, ToolError, approval_signature, atlas_tls_probe, http_probe, resolve_atlas_shard_addresses, resolve_srv_records, redact, run_command, safe_address
 from diagnostic_gateway.tools import DiagnosticTools
 
 
@@ -26,7 +26,7 @@ AUTH = {"Authorization": "Bearer " + TOKEN}
 
 @pytest.fixture
 def config(tmp_path):
-    return GatewayConfig(containers=["codeduel-api-1", "aiops-demo"], write_containers=["aiops-demo"], allowed_actions={"aiops-demo": ["start_container", "restart_container", "stop_container"]}, services=["docker", "cloudflared", "tailscaled", "ssh"], hosts=["codeduel.online", "127.0.0.1", "localhost"], http_urls=["https://codeduel.online", "http://127.0.0.1:8085"], tcp_targets=[{"host": "127.0.0.1", "port": 8085}], writes_enabled=True, state_path=str(tmp_path / "approvals.sqlite3"))
+    return GatewayConfig(containers=["codeduel-api-1", "aiops-demo"], write_containers=["aiops-demo"], allowed_actions={"aiops-demo": ["start_container", "restart_container", "stop_container"]}, services=["docker", "cloudflared", "tailscaled", "ssh"], hosts=["codeduel.online", "127.0.0.1", "localhost"], http_urls=["https://codeduel.online", "http://127.0.0.1:8085"], tcp_targets=[{"host": "127.0.0.1", "port": 8085}], atlas_seeds=[{"seed": "cluster0.etfzpvb.mongodb.net", "shard_hostname_suffix": "etfzpvb.mongodb.net"}], writes_enabled=True, state_path=str(tmp_path / "approvals.sqlite3"))
 
 
 @pytest.fixture
@@ -65,12 +65,15 @@ def test_container_inventory_projects_safe_fields_and_does_not_infer_absence_fro
 def test_all_required_read_tools_registered(client):
     metadata = client.get("/tools", headers=AUTH).json()["tools"]
     names = {item["name"] for item in metadata if item["risk_level"] == "READ_ONLY"}
-    assert len(names) == 27
-    assert {"dns_lookup", "ping_host", "http_check", "docker_list", "docker_inspect", "docker_logs", "service_status", "is_service_enabled", "journal_logs", "network_interfaces", "route_table", "default_gateway", "cpu_usage", "memory_usage", "disk_usage", "filesystem_mounts", "temperatures", "system_uptime", "process_list", "find_process", "inspect_process", "listening_ports", "port_check"} <= names
+    assert len(names) == 28
+    assert {"dns_lookup", "ping_host", "http_check", "docker_list", "docker_inspect", "docker_logs", "service_status", "is_service_enabled", "journal_logs", "network_interfaces", "route_table", "default_gateway", "cpu_usage", "memory_usage", "disk_usage", "filesystem_mounts", "temperatures", "system_uptime", "process_list", "find_process", "inspect_process", "listening_ports", "port_check", "mongodb_atlas_connectivity"} <= names
     assert not any(name in names for name in ("run_shell", "execute_bash"))
     inspect = next(item for item in metadata if item["name"] == "docker_inspect")
     assert inspect["parameters"]["properties"]["container"]["enum"] == ["codeduel-api-1", "aiops-demo"]
     assert inspect["parameters"]["additionalProperties"] is False
+    atlas = next(item for item in metadata if item["name"] == "mongodb_atlas_connectivity")
+    assert atlas["risk_level"] == "READ_ONLY"
+    assert atlas["parameters"]["properties"]["seed"]["enum"] == ["cluster0.etfzpvb.mongodb.net"]
 
 
 @pytest.mark.parametrize("tool,args", [
@@ -86,6 +89,7 @@ def test_all_required_read_tools_registered(client):
     ("docker_list", {"command": "rm -rf /"}),
     ("http_check", {"url": "https://codeduel.online", "headers": {}}),
     ("port_check", {"host": "localhost", "port": True}),
+    ("mongodb_atlas_connectivity", {"seed": "mongodb+srv://user:secret@cluster0.etfzpvb.mongodb.net/app"}), # secret-scan: fixture
 ])
 def test_strict_schema_rejects_injection_and_invalid_args(client, tool, args):
     assert client.post("/tools/" + tool, json=args, headers=AUTH).status_code == 422
@@ -101,6 +105,7 @@ def test_strict_schema_rejects_injection_and_invalid_args(client, tool, args):
     ("http_check", {"url": "https://codeduel.online?target=http://127.0.0.1"}),
     ("disk_usage", {"path": "/etc/shadow"}),
     ("port_check", {"host": "127.0.0.1", "port": 5432}),
+    ("mongodb_atlas_connectivity", {"seed": "attacker.example"}),
 ])
 def test_scopes_rejected_before_execution(client, tool, args, monkeypatch):
     registry = client.app.state.registry
@@ -155,6 +160,109 @@ def test_cpu_usage_is_structured(config, monkeypatch):
     monkeypatch.setattr("diagnostic_gateway.tools.psutil.getloadavg", lambda: (0.5, 0.4, 0.3))
     result = tools.cpu_usage()
     assert result == {"used_percent": 30.0, "per_cpu_percent": [20.0, 40.0], "cpu_count": 2, "cpu_count_physical": 1, "load_average": [0.5, 0.4, 0.3], "time_percent": {"user": 25.0, "system": 5.0, "idle": 68.0, "iowait": 2.0}, "severity": "normal"}
+
+
+def test_atlas_connectivity_only_resolves_constrained_shard_hosts(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    srv_calls, shard_calls, probe_calls = [], [], []
+    monkeypatch.setattr(
+        "diagnostic_gateway.tools.resolve_srv_records",
+        lambda seed, lifetime: srv_calls.append((seed, lifetime)) or [
+            {"hostname": "ac-1.etfzpvb.mongodb.net", "port": 27017, "priority": 0, "weight": 0},
+            {"hostname": "metadata.attacker.example", "port": 27017, "priority": 0, "weight": 0},
+            {"hostname": "ac-2.etfzpvb.mongodb.net", "port": 27018, "priority": 0, "weight": 0},
+        ],
+    )
+    monkeypatch.setattr(
+        "diagnostic_gateway.tools.resolve_atlas_shard_addresses",
+        lambda hostname, *, suffix, lifetime: shard_calls.append((hostname, suffix, lifetime)) or ["8.8.8.8"],
+    )
+    monkeypatch.setattr(
+        "diagnostic_gateway.tools.atlas_tls_probe",
+        lambda hostname, address, *, port, timeout: probe_calls.append((hostname, address, port, timeout)) or {"address": address, "port": port, "tcp_reachable": True, "tcp_latency_ms": 1, "tls_reachable": True, "tls_latency_ms": 2, "error_code": None, "error": None},
+    )
+
+    result = tools.mongodb_atlas_connectivity("cluster0.etfzpvb.mongodb.net")
+
+    assert result["reachable"] is True
+    assert result["error_code"] is None
+    assert result["srv"]["rejected_record_count"] == 2
+    assert result["srv"]["records"] == [{"hostname": "ac-1.etfzpvb.mongodb.net", "port": 27017, "priority": 0, "weight": 0}]
+    assert srv_calls and srv_calls[0][0] == "cluster0.etfzpvb.mongodb.net"
+    assert shard_calls and shard_calls[0][0:2] == ("ac-1.etfzpvb.mongodb.net", "etfzpvb.mongodb.net")
+    assert probe_calls and probe_calls[0][0:3] == ("ac-1.etfzpvb.mongodb.net", "8.8.8.8", 27017)
+    assert "attacker.example" not in json.dumps(result)
+
+
+def test_atlas_connectivity_returns_stable_srv_failure_code(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    monkeypatch.setattr(
+        "diagnostic_gateway.tools.resolve_srv_records",
+        lambda seed, lifetime: (_ for _ in ()).throw(ToolError("resolver did not answer", error_code="ATLAS_SRV_TIMEOUT")),
+    )
+
+    result = tools.mongodb_atlas_connectivity("cluster0.etfzpvb.mongodb.net")
+
+    assert result == {
+        "seed": "cluster0.etfzpvb.mongodb.net",
+        "port": 27017,
+        "reachable": False,
+        "error_code": "ATLAS_SRV_TIMEOUT",
+        "error": "Atlas SRV lookup did not complete",
+        "srv": {"resolved": False, "records": [], "rejected_record_count": 0, "truncated": False, "error_code": "ATLAS_SRV_TIMEOUT", "error": "Atlas SRV lookup did not complete"},
+        "shards": [],
+        "probe_budget_exhausted": False,
+    }
+
+
+def test_atlas_safety_helpers_pin_numeric_address_and_constrain_suffix(monkeypatch):
+    class Answer:
+        target = "ac-1.etfzpvb.mongodb.net."
+        port = 27017
+        priority = 0
+        weight = 0
+
+    class Resolver:
+        def resolve(self, hostname, record, *, lifetime):
+            assert (hostname, record) == ("_mongodb._tcp.cluster0.etfzpvb.mongodb.net", "SRV")
+            assert lifetime <= 5
+            return [Answer()]
+
+    monkeypatch.setattr("diagnostic_gateway.safety.dns.resolver.Resolver", Resolver)
+    assert resolve_srv_records("cluster0.etfzpvb.mongodb.net") == [{"hostname": "ac-1.etfzpvb.mongodb.net", "port": 27017, "priority": 0, "weight": 0}]
+    with pytest.raises(ToolError) as rejected:
+        resolve_atlas_shard_addresses("metadata.attacker.example", suffix="etfzpvb.mongodb.net")
+    assert rejected.value.error_code == "ATLAS_SRV_TARGET_NOT_ALLOWED"
+
+    created, connections, server_names = [], [], []
+
+    class RawSocket:
+        def settimeout(self, value):
+            assert 0 < value <= 5
+
+        def connect(self, destination):
+            connections.append(destination)
+
+        def close(self):
+            pass
+
+    class TLSSocket:
+        def close(self):
+            pass
+
+    class Context:
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            server_names.append(server_hostname)
+            return TLSSocket()
+
+    monkeypatch.setattr("diagnostic_gateway.safety.socket.socket", lambda family, kind: created.append((family, kind)) or RawSocket())
+    monkeypatch.setattr("diagnostic_gateway.safety.socket.getaddrinfo", lambda *args: pytest.fail("unexpected DNS lookup"))
+    monkeypatch.setattr("diagnostic_gateway.safety.ssl.create_default_context", lambda: Context())
+    probe = atlas_tls_probe("ac-1.etfzpvb.mongodb.net", "8.8.8.8", timeout=1)
+    assert probe["tcp_reachable"] and probe["tls_reachable"] and probe["error_code"] is None
+    assert connections == [("8.8.8.8", 27017)]
+    assert server_names == ["ac-1.etfzpvb.mongodb.net"]
+    assert created == [(socket.AF_INET, socket.SOCK_STREAM)]
 
 
 def test_listening_ports_returns_only_listeners(config, monkeypatch):
@@ -242,6 +350,23 @@ def test_execution_response_redacts_log_and_error(client, monkeypatch):
     response = client.post("/tools/docker_logs", json={"container": "codeduel-api-1"}, headers=AUTH)
     assert response.json()["ok"] is True
     assert "private-value" not in response.text
+
+
+def test_gateway_error_envelope_uses_stable_tool_error_codes(client, monkeypatch):
+    monkeypatch.setattr(
+        client.app.state.registry.definitions["docker_logs"],
+        "handler",
+        lambda **kwargs: (_ for _ in ()).throw(ToolError("host command timed out")),
+    )
+    response = client.post("/tools/docker_logs", json={"container": "codeduel-api-1"}, headers=AUTH)
+    assert response.json()["error_code"] == "TOOL_TIMEOUT"
+    monkeypatch.setattr(
+        client.app.state.registry.definitions["docker_logs"],
+        "handler",
+        lambda **kwargs: (_ for _ in ()).throw(ToolError("unsafe result", error_code="ATLAS_ADDRESS_NOT_ALLOWED")),
+    )
+    response = client.post("/tools/docker_logs", json={"container": "codeduel-api-1"}, headers=AUTH)
+    assert response.json()["error_code"] == "ATLAS_ADDRESS_NOT_ALLOWED"
 
 
 @pytest.mark.parametrize("address", ["169.254.169.254", "10.0.0.1", "127.0.0.1", "::1", "0.0.0.0", "224.0.0.1", "fd00::1"])
@@ -441,6 +566,12 @@ def test_config_rejects_unsafe_scopes():
         GatewayConfig(write_containers=["unlisted"])
     with pytest.raises(ValidationError):
         GatewayConfig(http_urls=["https://user:pass@codeduel.online"]) # secret-scan: fixture
+    with pytest.raises(ValidationError):
+        GatewayConfig(atlas_seeds=[{"seed": "mongodb+srv://cluster0.etfzpvb.mongodb.net", "shard_hostname_suffix": "etfzpvb.mongodb.net"}]) # secret-scan: fixture
+    with pytest.raises(ValidationError):
+        GatewayConfig(atlas_seeds=[{"seed": "cluster0.etfzpvb.mongodb.net", "shard_hostname_suffix": "attacker.example"}])
+    with pytest.raises(ValidationError):
+        GatewayConfig(atlas_seeds=[{"seed": "cluster0.etfzpvb.mongodb.net", "shard_hostname_suffix": "etfzpvb.mongodb.net", "port": 27018}])
 
 
 def test_host_resource_tools_are_structured(config):
@@ -454,6 +585,17 @@ def test_host_resource_tools_are_structured(config):
     processes = tools.process_list(3)
     assert len(processes["processes"]) <= 3
     assert "arguments_omitted" in processes
+
+
+def test_memory_usage_survives_unavailable_swap_accounting(config, monkeypatch):
+    tools = DiagnosticTools(config)
+    monkeypatch.setattr(
+        "diagnostic_gateway.tools.psutil.swap_memory",
+        lambda: (_ for _ in ()).throw(OSError("swap accounting unavailable")),
+    )
+    result = tools.memory_usage()
+    assert result["total_bytes"] > 0
+    assert result["swap"] == {"available": False, "total_bytes": None, "used_bytes": None, "used_percent": None}
 
 
 def test_exact_action_policy_controls_metadata_and_execution(config):

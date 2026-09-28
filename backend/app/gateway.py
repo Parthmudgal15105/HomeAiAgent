@@ -10,7 +10,7 @@ from .config import Settings
 from .safety import redact
 
 
-READ_TOOLS = frozenset({'dns_lookup', 'ping_host', 'http_check', 'docker_list', 'docker_inspect', 'docker_logs', 'service_status', 'is_service_enabled', 'journal_logs', 'network_interfaces', 'route_table', 'default_gateway', 'cpu_usage', 'memory_usage', 'disk_usage', 'filesystem_mounts', 'temperatures', 'system_uptime', 'process_list', 'find_process', 'inspect_process', 'listening_ports', 'port_check', 'tailscale_status', 'cloudflared_status', 'docker_stats', 'recent_docker_events', 'check_application_health'})
+READ_TOOLS = frozenset({'dns_lookup', 'ping_host', 'http_check', 'docker_list', 'docker_inspect', 'docker_logs', 'service_status', 'is_service_enabled', 'journal_logs', 'network_interfaces', 'route_table', 'default_gateway', 'cpu_usage', 'memory_usage', 'disk_usage', 'filesystem_mounts', 'temperatures', 'system_uptime', 'process_list', 'find_process', 'inspect_process', 'listening_ports', 'port_check', 'tailscale_status', 'cloudflared_status', 'docker_stats', 'recent_docker_events', 'mongodb_atlas_connectivity', 'check_application_health'})
 WRITE_TOOLS = frozenset({'restart_container', 'start_container', 'stop_container', 'restart_service', 'start_service', 'stop_service'})
 
 
@@ -95,5 +95,7 @@ class OperationsGateway:
             raise ValueError('Application health is read-only')
         validate_tool(await self.registry(), tool, arguments)
         from .application_health import check_application_health
+        started = time.monotonic()
         result = await check_application_health(self.settings, self.host_gateway, arguments['application'])
-        return {'tool': tool, 'ok': True, 'result': redact(result), 'duration_ms': 0}
+        return {'tool': tool, 'ok': True, 'result': redact(result),
+                'duration_ms': round((time.monotonic() - started) * 1000, 1)}

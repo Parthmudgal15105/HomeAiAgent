@@ -14,7 +14,7 @@ Use the symptom to select the next check. Compare `http_check` for `https://code
 
 ## Safe remediation
 
-Present observed causes and uncertainty before proposing changes. Container start/restart requires enabled write policy and a persisted approval for that exact target. Current deployment policy disables writes. Do not replace the existing tunnel service, modify CodeDuel environment secrets, or restart a nonexistent local MongoDB service. Atlas/network remediation may require an operator outside the tool scope.
+Present observed causes and uncertainty before proposing changes. Container start/restart requires enabled backend policy, a persisted approval, and fresh exact-target state evidence. The checked-in gateway policy allows only named manual container start/restart targets and has no autonomous grants; confirm the authenticated deployed registry before relying on it. Do not replace the existing tunnel service, modify CodeDuel environment secrets, or restart a nonexistent local MongoDB service. Use the bounded `mongodb_atlas_connectivity` result to distinguish DNS/TLS reachability; credentials, provider-side failures, and application-level Atlas causes still require escalation.
 
 ## Verification
 

@@ -88,10 +88,12 @@ def create_app(config: GatewayConfig | None = None, *, token: str | None = None,
         except ApprovalError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ToolError as exc:
-            response = {"tool": name, "ok": False, "result": {}, "error": str(redact(str(exc))), "duration_ms": round((time.monotonic() - started) * 1000)}
+            message = str(exc)
+            error_code = exc.error_code or ("TOOL_TIMEOUT" if "timeout" in message.lower() or "timed out" in message.lower() else "TOOL_FAILURE")
+            response = {"tool": name, "ok": False, "result": {}, "error": str(redact(message)), "error_code": error_code, "duration_ms": round((time.monotonic() - started) * 1000)}
         except Exception as exc:
             log.error("tool=%s failure_type=%s", name, type(exc).__name__)
-            response = {"tool": name, "ok": False, "result": {}, "error": "Diagnostic failed; inspect the gateway service state", "duration_ms": round((time.monotonic() - started) * 1000)}
+            response = {"tool": name, "ok": False, "result": {}, "error": "Diagnostic failed; inspect the gateway service state", "error_code": "TOOL_FAILURE", "duration_ms": round((time.monotonic() - started) * 1000)}
         if approval_consumed and ledger:
             ledger.complete(x_action_id, response)
         log.info("tool=%s ok=%s duration_ms=%s", name, response["ok"], response["duration_ms"])

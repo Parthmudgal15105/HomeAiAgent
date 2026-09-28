@@ -44,6 +44,13 @@ def summarize_observation(tool: str, arguments: dict, envelope: dict) -> str:
         return f"{host} resolved to {', '.join(map(str, result.get('addresses', [])[:5]))}." if result.get('resolved') else f'{host} did not resolve.'
     if tool == 'port_check':
         return f"TCP {arguments.get('host', '?')}:{arguments.get('port', '?')} is {'open' if result.get('open') else 'unreachable'} from the host."
+    if tool == 'mongodb_atlas_connectivity':
+        shards = result.get('shards', [])
+        reachable = result.get('reachable') is True
+        resolved = result.get('srv', {}).get('resolved') is True
+        return (f"Atlas seed {arguments.get('seed', result.get('seed', '?'))}: SRV {'resolved' if resolved else 'did not resolve'}; "
+                f"verified shard TLS {'reachable' if reachable else 'did not complete'}; "
+                f"checked {len(shards)} permitted shard host(s); error code {result.get('error_code') or 'none'}.")
     if tool == 'check_application_health':
         components = result.get('components', [])
         failing = [item.get('name', item.get('id', '?')) for item in components if item.get('status') == 'UNHEALTHY']

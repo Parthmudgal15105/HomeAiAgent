@@ -205,17 +205,16 @@
       "local_health_urls": []
     },
     "mongodb-atlas": {
-      "description": "External Atlas cluster0.etfzpvb.mongodb.net; no local MongoDB container. Verify through API /health/ready database check. Do not restart a nonexistent mongodb service. Connection errors alone do not establish IP allowlist failure.",
+      "description": "External Atlas cluster0.etfzpvb.mongodb.net; no local MongoDB container. The bounded Atlas diagnostic verifies SRV resolution and unauthenticated TCP/TLS reachability only; it cannot prove authentication, database authorization, or Atlas account policy. Do not restart a nonexistent mongodb service.",
       "depends_on": [],
       "health_checks": [
         {
-          "tool": "http_check",
+          "tool": "mongodb_atlas_connectivity",
           "arguments": {
-            "url": "codeduel-api-ready"
+            "seed": "cluster0.etfzpvb.mongodb.net"
           },
           "expect": {
-            "reachable": true,
-            "status_code": 200
+            "reachable": true
           }
         }
       ],

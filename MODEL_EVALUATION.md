@@ -2,6 +2,12 @@
 
 Status: production model gate not passed. These measurements are real Ollama CPU inference, but the initial four-case microbenchmark is not full incident accuracy.
 
+## 28 September 2026 reliability guardrails
+
+The local-source controller now uses a compact prompt view for tools/topology, keeps the full response schema for validation, caps default Ollama output at 384 tokens, and rejects an estimated prompt-plus-output request above the configured context window before calling Ollama. A representative checked-in production registry measured approximately 7,515 estimated input tokens plus 384 output tokens against `OLLAMA_NUM_CTX=8192`; this is a guardrail estimate, not a successful inference measurement. RAG retrieval is deferred until initial observation evidence by default to avoid evicting the CPU reasoning model.
+
+No new Ollama, Gemini, or live-host evaluation was run for this change. The scripted contract suite is controller coverage only; it must not be represented as model quality or production acceptance.
+
 Hardware: Intel i5-8250U,16GB RAM; Ollama limited to3CPU/7GB; no GPU offload. Both candidates are quantized Q4_K_M models.
 
 | Candidate | Parameters | Model file | Four-case valid JSON | Expected next tool | Mean response |

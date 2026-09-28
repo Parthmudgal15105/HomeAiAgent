@@ -6,6 +6,30 @@ import subprocess
 import urllib.request
 
 
+def assert_gateway_write_policy(tools: list[dict], source_policy: Path = Path('config/gateway.json')) -> None:
+    """Ensure the authenticated deployed registry matches the reviewed source policy.
+
+    This prevents a deployment from silently widening manual or autonomous write
+    targets.  It intentionally compares metadata returned by the running,
+    authenticated gateway; it does not perform any action.
+    """
+    policy = json.loads(source_policy.read_text())
+    expected = {
+        action: sorted(target for target, actions in policy.get('allowed_actions', {}).items() if action in actions)
+        for action in ('start_container', 'stop_container', 'restart_container',
+                       'start_service', 'stop_service', 'restart_service')
+    }
+    expected = {action: targets for action, targets in expected.items() if targets}
+    actual = {tool['name']: tool for tool in tools if tool.get('risk_level') != 'READ_ONLY'}
+    assert set(actual) == set(expected), 'Gateway write tools differ from config/gateway.json'
+    for action, targets in expected.items():
+        metadata = actual[action]
+        field = 'container' if action.endswith('_container') else 'service'
+        assert sorted(metadata['parameters']['properties'][field].get('enum', [])) == targets, f'{action} targets differ from config/gateway.json'
+        autonomous = sorted(target for target, actions in policy.get('autonomous_actions', {}).items() if action in actions)
+        assert sorted(metadata.get('autonomous_targets', [])) == autonomous, f'{action} autonomous targets differ from config/gateway.json'
+
+
 def production():
     results = {}
     for url in ('https://codeduel.online', 'https://codeduel.online/api/explore/problems', 'http://127.0.0.1:8085/healthz'):
@@ -46,7 +70,9 @@ def main():
         assert response.status == 200
     request = urllib.request.Request('http://127.0.0.1:18081/tools', headers={'Authorization': 'Bearer ' + values['GATEWAY_TOKEN']})
     with urllib.request.urlopen(request, timeout=10) as response:
-        assert len(json.load(response)['tools']) >= 19
+        gateway_tools = json.load(response)['tools']
+    assert len(gateway_tools) >= 19
+    assert_gateway_write_policy(gateway_tools)
     assert subprocess.run(['systemctl', 'is-active', '--quiet', 'aiops-gateway']).returncode == 0
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     for container in ('aiops-backend-1', 'aiops-frontend-1'):

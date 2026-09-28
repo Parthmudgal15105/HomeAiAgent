@@ -36,7 +36,7 @@ def compact_schema(schema):
     return result
 
 
-IMPORTANT = {'error', 'state', 'status', 'running', 'health', 'healthy', 'resolved', 'reachable', 'open', 'status_code', 'severity', 'used_percent', 'percent', 'restart_count', 'oom_killed', 'exit_code', 'rfkill', 'soft_blocked', 'hard_blocked', 'name', 'container', 'address', 'addresses', 'interfaces', 'containers', 'missing_configured_containers'}
+IMPORTANT = {'error', 'error_code', 'state', 'status', 'running', 'health', 'healthy', 'resolved', 'reachable', 'tcp_reachable', 'tls_reachable', 'open', 'status_code', 'severity', 'used_percent', 'percent', 'restart_count', 'oom_killed', 'exit_code', 'rfkill', 'soft_blocked', 'hard_blocked', 'name', 'container', 'address', 'addresses', 'interfaces', 'containers', 'missing_configured_containers'}
 ERROR = re.compile(r'error|fail|unavailable|refused|denied|timeout|timed out|fatal|rf.?kill|blocked|no space', re.I)
 
 

@@ -52,15 +52,76 @@ def container(name: str, state: str = "running", **extra: Any) -> dict[str, Any]
     return {"name": name, "state": state, "status": state, "health": "healthy" if state == "running" else "unhealthy", **extra}
 
 
-CONTAINERS = tuple(container(name) for name in ("codeduel-api", "codeduel-worker", "redis", "mongodb"))
+def inspected_container(name: str, state: str = "running", **extra: Any) -> dict[str, Any]:
+    """Match the gateway's nested ``docker_inspect`` response shape."""
+    running = state == "running"
+    return {
+        "name": name,
+        "image": "synthetic/" + name,
+        "state": {
+            "status": state,
+            "running": running,
+            "restarting": False,
+            "oom_killed": extra.pop("oom_killed", False),
+            "exit_code": extra.pop("exit_code", 0 if running else 1),
+            "started_at": "2026-01-01T00:00:00Z" if running else "0001-01-01T00:00:00Z",
+            "finished_at": "0001-01-01T00:00:00Z" if running else "2026-01-01T00:00:00Z",
+        },
+        "restart_count": extra.pop("restart_count", 0),
+        "health": extra.pop("health", "healthy" if running else "unhealthy"),
+        "ports": {},
+        "networks": [],
+        **extra,
+    }
+
+
+def disk(path: str, used_percent: float, free_bytes: int) -> dict[str, Any]:
+    """Use the production ``disk_usage`` shape rather than a legacy list fixture."""
+    total_bytes = 100_000_000_000
+    return {
+        "path": path,
+        "total_bytes": total_bytes,
+        "used_bytes": total_bytes - free_bytes,
+        "free_bytes": free_bytes,
+        "used_percent": used_percent,
+        "severity": "critical" if used_percent > 95 else "high" if used_percent >= 90 else "warning" if used_percent >= 80 else "normal",
+        "inodes": {"total": 1_000_000, "used": 500_000, "free": 500_000, "used_percent": 50.0, "severity": "normal"},
+    }
+
+
+def atlas_connectivity(seed: str, *, reachable: bool, error_code: str | None = None) -> dict[str, Any]:
+    """A credential-free fixture matching the bounded Atlas reachability tool."""
+    shard = "ac-abc123-shard-00-00.etfzpvb.mongodb.net"
+    probe = {
+        "address": "203.0.113.10",
+        "port": 27017,
+        "tcp_reachable": reachable,
+        "tls_reachable": reachable,
+        "latency_ms": 12 if reachable else 3000,
+        "error_code": None if reachable else error_code or "ATLAS_TLS_UNREACHABLE",
+        "error": None if reachable else "Synthetic TLS reachability failure",
+    }
+    return {
+        "seed": seed,
+        "port": 27017,
+        "reachable": reachable,
+        "error_code": None if reachable else error_code or "ATLAS_TLS_UNREACHABLE",
+        "error": None if reachable else "No permitted Atlas shard completed a verified TLS handshake",
+        "srv": {"resolved": True, "records": [{"hostname": shard, "port": 27017}], "rejected_record_count": 0, "truncated": False, "error_code": None, "error": None},
+        "shards": [{"hostname": shard, "port": 27017, "resolved": True, "addresses": ["203.0.113.10"], "probes": [probe], "error_code": None if reachable else probe["error_code"], "error": None if reachable else "Atlas shard did not complete a verified TLS handshake"}],
+        "probe_budget_exhausted": False,
+    }
+
+
+CONTAINERS = tuple(container(name) for name in ("codeduel-api", "codeduel-worker", "redis"))
 SYNTHETIC_TOPOLOGY: dict[str, Any] = {
     "description": "Synthetic evaluation environment; names and ports are fictional fixtures, not discovered production facts.",
     "services": {
         "codeduel-public": {"url": "https://codeduel.online", "depends_on": ["cloudflared", "codeduel-api"]},
-        "codeduel-api": {"container": "codeduel-api", "url": "http://127.0.0.1:3001/health", "depends_on": ["mongodb", "redis"]},
-        "codeduel-worker": {"container": "codeduel-worker", "depends_on": ["redis", "docker"]},
+        "codeduel-api": {"container": "codeduel-api", "url": "http://127.0.0.1:3001/health", "depends_on": ["mongodb-atlas", "redis"]},
+        "codeduel-worker": {"container": "codeduel-worker", "depends_on": ["redis", "mongodb-atlas", "docker"]},
         "redis": {"container": "redis", "host": "127.0.0.1", "port": 6379},
-        "mongodb": {"container": "mongodb", "host": "127.0.0.1", "port": 27017},
+        "mongodb-atlas": {"description": "Synthetic external Atlas dependency; no local MongoDB container is modeled.", "depends_on": []},
         "cloudflared": {"systemd_service": "cloudflared"},
         "docker": {"systemd_service": "docker"},
     },
@@ -70,13 +131,13 @@ HEALTHY_FIXTURES = (
     Fixture("dns_lookup", {}, {"resolved": True, "addresses": ["198.51.100.20"]}),
     Fixture("http_check", {}, {"reachable": True, "status_code": 200, "latency_ms": 12, "body_preview": '{"status":"ok"}'}),
     Fixture("docker_list", {}, {"containers": list(CONTAINERS)}),
-    *(Fixture("docker_inspect", {"container": item["name"]}, item) for item in CONTAINERS),
+    *(Fixture("docker_inspect", {"container": item["name"]}, inspected_container(item["name"])) for item in CONTAINERS),
     Fixture("docker_logs", {}, {"lines": ["Service ready; dependency connections established"], "output": "Service ready; dependency connections established"}),
     Fixture("service_status", {}, {"state": "active", "active": True, "sub_state": "running"}),
     Fixture("journal_logs", {}, {"lines": ["Service started successfully"], "output": "Service started successfully"}),
     Fixture("port_check", {}, {"open": True, "reachable": True}),
-    Fixture("ping_host", {}, {"reachable": True, "packet_loss_percent": 0}),
-    Fixture("disk_usage", {}, {"filesystems": [{"mountpoint": "/", "used_percent": 42, "severity": "normal", "free_bytes": 58_000_000_000}]}),
+    Fixture("ping_host", {}, {"hostname": "configured-host", "reachable": True, "packet_loss_percent": 0, "rtt_avg_ms": 1.0, "note": "ICMP may be blocked even when the service works", "error": None}),
+    Fixture("disk_usage", {}, disk("/", 42, 58_000_000_000)),
     Fixture("memory_usage", {}, {"used_percent": 40, "available_bytes": 8_000_000_000, "swap_used_bytes": 0}),
     Fixture("network_interfaces", {}, {"interfaces": [{"name": "wlo1", "state": "UP", "addresses": ["192.0.2.10"]}], "rfkill": [{"device": "phy0", "soft_blocked": False, "hard_blocked": False}]}),
     Fixture("route_table", {}, {"routes": [{"destination": "default", "gateway": "192.0.2.1", "interface": "wlo1"}]}),
@@ -99,7 +160,7 @@ SCENARIOS = (
             Fixture("http_check", {"url": "https://codeduel.online"}, {"reachable": True, "status_code": 502, "body_preview": "Bad gateway"}),
             Fixture("http_check", {"url": "http://127.0.0.1:3001/health"}, {"reachable": False, "error": "Connection refused"}),
             Fixture("docker_list", {}, {"containers": [container("codeduel-api", "exited"), *CONTAINERS[1:]]}),
-            Fixture("docker_inspect", {"container": "codeduel-api"}, container("codeduel-api", "exited", exit_code=0, oom_killed=False)),
+            Fixture("docker_inspect", {"container": "codeduel-api"}, inspected_container("codeduel-api", "exited", exit_code=0, oom_killed=False)),
             Fixture("docker_logs", {"container": "codeduel-api"}, {"output": "Received SIGTERM; graceful shutdown completed", "lines": ["Received SIGTERM; graceful shutdown completed"]}),
         ),
         relevant_tools=frozenset({"http_check", "docker_list", "docker_inspect", "docker_logs", "service_status", "dns_lookup", "port_check"}),
@@ -115,8 +176,8 @@ SCENARIOS = (
         fixtures=(
             Fixture("docker_logs", {"container": "codeduel-worker"}, {"output": "BullMQ connection error: connect ECONNREFUSED redis:6379; jobs stalled", "lines": ["BullMQ connection error: connect ECONNREFUSED redis:6379; jobs stalled"]}),
             Fixture("port_check", {"port": 6379}, {"open": False, "reachable": False, "error": "Connection refused"}),
-            Fixture("docker_list", {}, {"containers": [*CONTAINERS[:2], container("redis", "exited"), CONTAINERS[3]]}),
-            Fixture("docker_inspect", {"container": "redis"}, container("redis", "exited", exit_code=1)),
+            Fixture("docker_list", {}, {"containers": [*CONTAINERS[:2], container("redis", "exited")]}),
+            Fixture("docker_inspect", {"container": "redis"}, inspected_container("redis", "exited", exit_code=1)),
             Fixture("docker_logs", {"container": "redis"}, {"output": "Redis process exited; no listener on port 6379", "lines": ["Redis process exited; no listener on port 6379"]}),
         ),
         relevant_tools=frozenset({"docker_logs", "port_check", "docker_inspect", "docker_list", "http_check"}),
@@ -125,22 +186,21 @@ SCENARIOS = (
         verification_plan=("Check Redis port and container health", "Check worker logs and queue progress", "Check API health"),
     ),
     Scenario(
-        id="mongodb_down", symptom="codeduel.online returns 502 and the CodeDuel API repeatedly exits.",
-        root_cause="MongoDB is unavailable; database connection failures cause the CodeDuel API to exit.",
-        root_cause_term_groups=(("mongodb", "mongo", "database"), ("unavailable", "down", "refused", "failure", "exited", "stopped")),
-        plan=(Diagnostic("docker_list"), Diagnostic("docker_logs", {"container": "codeduel-api", "lines": 100}), Diagnostic("port_check", {"host": "127.0.0.1", "port": 27017})),
+        id="mongodb_down", symptom="codeduel.online returns 502 and the CodeDuel API repeatedly exits with MongoDB Atlas errors.",
+        root_cause="MongoDB Atlas connectivity is unavailable; the external database dependency prevents the CodeDuel API from starting.",
+        root_cause_term_groups=(("mongodb", "mongo", "database"), ("atlas", "connectivity", "external"), ("unavailable", "down", "failure", "unreachable")),
+        plan=(Diagnostic("docker_logs", {"container": "codeduel-api", "lines": 100}), Diagnostic("mongodb_atlas_connectivity", {"seed": "cluster0.etfzpvb.mongodb.net"})),
         fixtures=(
             Fixture("http_check", {}, {"reachable": False, "status_code": 502, "error": "API upstream unavailable"}),
-            Fixture("docker_list", {}, {"containers": [container("codeduel-api", "exited"), CONTAINERS[1], CONTAINERS[2], container("mongodb", "exited")]}),
-            Fixture("docker_inspect", {"container": "codeduel-api"}, container("codeduel-api", "exited", exit_code=1)),
-            Fixture("docker_inspect", {"container": "mongodb"}, container("mongodb", "exited", exit_code=1)),
-            Fixture("docker_logs", {"container": "codeduel-api"}, {"output": "MongoServerSelectionError: connect ECONNREFUSED mongodb:27017; terminating API", "lines": ["MongoServerSelectionError: connect ECONNREFUSED mongodb:27017; terminating API"]}),
-            Fixture("port_check", {"port": 27017}, {"open": False, "reachable": False, "error": "Connection refused"}),
+            Fixture("docker_list", {}, {"containers": [container("codeduel-api", "exited"), CONTAINERS[1], CONTAINERS[2]]}),
+            Fixture("docker_inspect", {"container": "codeduel-api"}, inspected_container("codeduel-api", "exited", exit_code=1)),
+            Fixture("docker_logs", {"container": "codeduel-api"}, {"container": "codeduel-api", "lines": ["MongoServerSelectionError: MongoDB Atlas server selection failed; terminating API"], "truncated": False}),
+            Fixture("mongodb_atlas_connectivity", {"seed": "cluster0.etfzpvb.mongodb.net"}, atlas_connectivity("cluster0.etfzpvb.mongodb.net", reachable=False)),
         ),
-        relevant_tools=frozenset({"docker_list", "docker_logs", "port_check", "docker_inspect", "http_check", "service_status", "dns_lookup"}),
-        decisive_tools=frozenset({"docker_logs", "port_check", "docker_inspect", "docker_list"}),
-        remediation="Request approval to restore MongoDB and then restart the API if necessary.",
-        verification_plan=("Check MongoDB container and port", "Check API container and local endpoint", "Check public endpoint"),
+        relevant_tools=frozenset({"docker_logs", "mongodb_atlas_connectivity", "docker_inspect", "docker_list", "http_check", "service_status", "dns_lookup"}),
+        decisive_tools=frozenset({"docker_logs", "mongodb_atlas_connectivity"}),
+        remediation="Escalate the external Atlas connectivity failure; do not restart a nonexistent local MongoDB service.",
+        verification_plan=("Check configured Atlas reachability", "Check API container and local endpoint", "Check public endpoint"),
     ),
     Scenario(
         id="cloudflared_stopped", symptom="codeduel.online is unavailable externally, but the local CodeDuel API responds.",
@@ -182,9 +242,9 @@ SCENARIOS = (
         root_cause_term_groups=(("disk", "filesystem", "storage"), ("full", "space", "99.5", "capacity", "exhaust")),
         plan=(Diagnostic("disk_usage"), Diagnostic("docker_logs", {"container": "codeduel-api", "lines": 100})),
         fixtures=(
-            Fixture("disk_usage", {}, {"filesystems": [{"mountpoint": "/", "used_percent": 99.5, "severity": "critical", "free_bytes": 50_000_000}]}),
+            Fixture("disk_usage", {}, disk("/", 99.5, 50_000_000)),
             Fixture("docker_logs", {"container": "codeduel-api"}, {"output": "ENOSPC: no space left on device while writing /var/app/data", "lines": ["ENOSPC: no space left on device while writing /var/app/data"]}),
-            Fixture("docker_logs", {"container": "mongodb"}, {"output": "Write failed: No space left on device", "lines": ["Write failed: No space left on device"]}),
+            Fixture("docker_logs", {"container": "codeduel-worker"}, {"output": "Queue persistence failed: No space left on device", "lines": ["Queue persistence failed: No space left on device"]}),
         ),
         relevant_tools=frozenset({"disk_usage", "docker_logs", "journal_logs", "docker_list", "docker_inspect"}),
         decisive_tools=frozenset({"disk_usage", "docker_logs"}),
@@ -195,11 +255,11 @@ SCENARIOS = (
         id="host_network_down", symptom="The host cannot reach its gateway or the internet; CodeDuel and Tailscale are unreachable.",
         root_cause="Host networking is unavailable: the primary network interface is down and no default route exists.",
         root_cause_term_groups=(("network", "interface", "route", "connectivity"), ("down", "unavailable", "missing", "no default", "disconnect")),
-        plan=(Diagnostic("network_interfaces"), Diagnostic("route_table"), Diagnostic("ping_host", {"host": "192.0.2.1"})),
+        plan=(Diagnostic("network_interfaces"), Diagnostic("route_table"), Diagnostic("ping_host", {"hostname": "192.0.2.1"})),
         fixtures=(
             Fixture("network_interfaces", {}, {"interfaces": [{"name": "wlo1", "state": "DOWN", "addresses": []}], "rfkill": [{"device": "phy0", "soft_blocked": False, "hard_blocked": False}]}),
             Fixture("route_table", {}, {"routes": [], "default_route": None}),
-            Fixture("ping_host", {}, {"reachable": False, "packet_loss_percent": 100, "error": "Network is unreachable"}),
+            Fixture("ping_host", {}, {"hostname": "192.0.2.1", "reachable": False, "packet_loss_percent": 100, "rtt_avg_ms": None, "note": "ICMP may be blocked even when the service works", "error": "Network is unreachable"}),
             Fixture("dns_lookup", {}, {"resolved": False, "addresses": [], "error": "Temporary failure in name resolution"}),
             Fixture("http_check", {"url": "https://codeduel.online"}, {"reachable": False, "error": "Network is unreachable"}),
             Fixture("tailscale_status", {}, {"state": "NoState", "online": False, "error": "Network unavailable"}),
@@ -218,7 +278,7 @@ SCENARIOS = (
             Fixture("network_interfaces", {}, {"interfaces": [{"name": "wlo1", "state": "DOWN", "addresses": []}], "rfkill": [{"device": "phy0", "soft_blocked": True, "hard_blocked": False}]}),
             Fixture("journal_logs", {}, {"output": "NetworkManager: Wi-Fi radio disabled by rfkill; wlo1 unavailable; operation not possible due to RF-kill", "lines": ["NetworkManager: Wi-Fi radio disabled by rfkill; wlo1 unavailable; operation not possible due to RF-kill"]}),
             Fixture("route_table", {}, {"routes": [], "default_route": None}),
-            Fixture("ping_host", {}, {"reachable": False, "packet_loss_percent": 100, "error": "Network is unreachable"}),
+            Fixture("ping_host", {}, {"hostname": "192.0.2.1", "reachable": False, "packet_loss_percent": 100, "rtt_avg_ms": None, "note": "ICMP may be blocked even when the service works", "error": "Network is unreachable"}),
             Fixture("tailscale_status", {}, {"state": "NoState", "online": False}),
             Fixture("dns_lookup", {}, {"resolved": False, "addresses": [], "error": "Network is unreachable"}),
         ),

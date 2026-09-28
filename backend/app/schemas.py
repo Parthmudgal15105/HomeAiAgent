@@ -48,6 +48,12 @@ class Decision(StrictModel):
     verification_plan: list[str] = Field(default_factory=list, max_length=10)
     prevention: list[str] = Field(default_factory=list, max_length=10)
     eliminated_causes: list[str] = Field(default_factory=list, max_length=10)
+    # These fields are informational only. They cannot authorize a tool or
+    # widen gateway scope, but make an out-of-scope conclusion actionable.
+    capability_status: Literal['KNOWN_TOOL', 'MISSING_TOOL'] | None = None
+    capability_gap: str | None = Field(default=None, max_length=160, pattern=r'^[a-z0-9][a-z0-9_.-]*$')
+    missing_capability: str = Field(default='', max_length=500)
+    recommended_next_check: str = Field(default='', max_length=500)
 
     @model_validator(mode='after')
     def validate_decision(self):
@@ -55,6 +61,10 @@ class Decision(StrictModel):
             raise ValueError('Tool decisions require a tool name')
         if self.decision_type == 'DIAGNOSIS' and (not self.root_cause or not self.evidence_observation_ids):
             raise ValueError('Diagnosis requires root_cause and current observation IDs')
+        if self.capability_status == 'MISSING_TOOL' and not self.capability_gap:
+            raise ValueError('MISSING_TOOL requires capability_gap')
+        if self.capability_gap and self.capability_status != 'MISSING_TOOL':
+            raise ValueError('capability_gap must be marked MISSING_TOOL')
         return self
 
 

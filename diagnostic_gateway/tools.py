@@ -15,7 +15,17 @@ import psutil
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import GatewayConfig, utilization_severity
-from .safety import ToolError, http_probe, resolve_addresses, run_command, safe_address
+from .safety import (
+    ToolError,
+    atlas_tls_probe,
+    hostname_matches_suffix,
+    http_probe,
+    resolve_addresses,
+    resolve_atlas_shard_addresses,
+    resolve_srv_records,
+    run_command,
+    safe_address,
+)
 
 
 class Arguments(BaseModel):
@@ -76,6 +86,12 @@ class PortArguments(Arguments):
     port: int = Field(ge=1, le=65535)
 
 
+class AtlasSeedArguments(Arguments):
+    # A seed is an opaque allowlist selector, never a MongoDB URI or set of
+    # caller-controlled connection options.
+    seed: str = Field(min_length=1, max_length=253, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
+
+
 class EventsArguments(Arguments):
     minutes: int = Field(default=10, ge=1, le=60)
 
@@ -92,6 +108,11 @@ class ToolDefinition:
 class DiagnosticTools:
     protected_service_writes = frozenset({"docker", "ssh", "sshd", "tailscaled"})
     protected_service_stops = protected_service_writes | {"cloudflared"}
+    max_atlas_srv_records = 6
+    max_atlas_addresses_per_shard = 2
+    max_atlas_endpoint_probes = 6
+    max_atlas_total_seconds = 8.0
+    max_atlas_endpoint_seconds = 3.0
 
     def __init__(self, config: GatewayConfig) -> None:
         self.config = config
@@ -125,6 +146,8 @@ class DiagnosticTools:
             ("docker_stats", "Read one resource-usage sample for configured running containers.", NoArguments),
             ("recent_docker_events", "Read bounded recent lifecycle events for configured containers.", EventsArguments),
         ]
+        if config.atlas_seeds:
+            specs.append(("mongodb_atlas_connectivity", "Resolve one configured MongoDB Atlas SRV seed, then perform bounded TCP and verified TLS reachability checks to its constrained shard hosts. It accepts no credentials or connection URI.", AtlasSeedArguments))
         for name, description, arguments in specs:
             self.definitions[name] = ToolDefinition(name, description, arguments, getattr(self, name))
         if config.writes_enabled:
@@ -155,6 +178,8 @@ class DiagnosticTools:
                     properties["service"]["enum"] = [name for name in self.action_targets(definition.name) if name not in blocked]
             if "url" in properties:
                 properties["url"]["enum"] = self.config.http_urls + list(self.config.container_http)
+            if "seed" in properties:
+                properties["seed"]["enum"] = [item.seed for item in self.config.atlas_seeds]
             if "path" in properties:
                 properties["path"]["enum"] = self.config.disk_paths
             if definition.name == "port_check":
@@ -196,6 +221,8 @@ class DiagnosticTools:
             self.require(arguments["url"], self.config.http_urls + list(self.config.container_http), "HTTP URL")
         if "path" in arguments:
             self.require(arguments["path"], self.config.disk_paths, "Filesystem path")
+        if tool == "mongodb_atlas_connectivity":
+            self.require(arguments["seed"], [item.seed for item in self.config.atlas_seeds], "Atlas seed")
         if tool == "port_check" and (arguments["host"], arguments["port"]) not in {(item.host, item.port) for item in self.config.tcp_targets}:
             raise ToolError("TCP host/port pair is not allowlisted")
 
@@ -205,6 +232,112 @@ class DiagnosticTools:
             return {"hostname": hostname, "resolved": True, "addresses": resolve_addresses(hostname)}
         except ToolError as exc:
             return {"hostname": hostname, "resolved": False, "addresses": [], "error": str(exc)}
+
+    def mongodb_atlas_connectivity(self, seed: str) -> dict[str, Any]:
+        """Bounded, unauthenticated Atlas reachability only; never opens a MongoDB session."""
+        self.require(seed, [item.seed for item in self.config.atlas_seeds], "Atlas seed")
+        configuration = next(item for item in self.config.atlas_seeds if item.seed == seed)
+        started = time.monotonic()
+        deadline = started + min(float(self.config.command_timeout_seconds), self.max_atlas_total_seconds)
+        result: dict[str, Any] = {
+            "seed": configuration.seed,
+            "port": configuration.port,
+            "reachable": False,
+            "error_code": None,
+            "error": None,
+            "srv": {"resolved": False, "records": [], "rejected_record_count": 0, "truncated": False, "error_code": None, "error": None},
+            "shards": [],
+            "probe_budget_exhausted": False,
+        }
+
+        def remaining() -> float:
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise TimeoutError("Atlas diagnostic exceeded its total time limit")
+            return value
+
+        try:
+            srv_records = resolve_srv_records(configuration.seed, lifetime=remaining())
+        except (ToolError, TimeoutError) as exc:
+            code = getattr(exc, "error_code", None) or "ATLAS_SRV_TIMEOUT"
+            result["error_code"] = code
+            result["error"] = "Atlas SRV lookup did not complete"
+            result["srv"].update({"error_code": code, "error": "Atlas SRV lookup did not complete"})
+            return result
+
+        candidates: list[dict[str, int | str]] = []
+        seen_hosts: set[str] = set()
+        rejected = 0
+        for record in srv_records:
+            hostname = str(record["hostname"])
+            if (int(record["port"]) != configuration.port
+                    or not hostname_matches_suffix(hostname, configuration.shard_hostname_suffix)
+                    or hostname in seen_hosts):
+                rejected += 1
+                continue
+            seen_hosts.add(hostname)
+            candidates.append(record)
+        result["srv"].update({
+            "resolved": True,
+            "records": candidates[:self.max_atlas_srv_records],
+            "rejected_record_count": rejected,
+            "truncated": len(candidates) > self.max_atlas_srv_records,
+        })
+        candidates = candidates[:self.max_atlas_srv_records]
+        if not candidates:
+            result["error_code"] = "ATLAS_NO_ALLOWED_SRV_TARGETS"
+            result["error"] = "Atlas SRV response had no permitted shard targets"
+            return result
+
+        probes_used = 0
+        for record in candidates:
+            hostname = str(record["hostname"])
+            shard: dict[str, Any] = {
+                "hostname": hostname,
+                "port": configuration.port,
+                "resolved": False,
+                "addresses": [],
+                "probes": [],
+                "error_code": None,
+                "error": None,
+            }
+            try:
+                addresses = resolve_atlas_shard_addresses(
+                    hostname,
+                    suffix=configuration.shard_hostname_suffix,
+                    lifetime=remaining(),
+                )
+            except (ToolError, TimeoutError) as exc:
+                code = getattr(exc, "error_code", None) or "ATLAS_PROBE_TIMEOUT"
+                shard.update({"error_code": code, "error": "Atlas shard hostname resolution did not complete"})
+                result["shards"].append(shard)
+                continue
+            shard.update({"resolved": True, "addresses": addresses[:self.max_atlas_addresses_per_shard]})
+            for address in shard["addresses"]:
+                if probes_used >= self.max_atlas_endpoint_probes:
+                    result["probe_budget_exhausted"] = True
+                    break
+                try:
+                    timeout = min(self.max_atlas_endpoint_seconds, remaining())
+                except TimeoutError:
+                    result["probe_budget_exhausted"] = True
+                    shard.update({"error_code": "ATLAS_PROBE_TIMEOUT", "error": "Atlas diagnostic reached its total time limit"})
+                    break
+                probe = atlas_tls_probe(hostname, address, port=configuration.port, timeout=timeout)
+                probes_used += 1
+                shard["probes"].append(probe)
+            if shard["probes"] and not any(item["tls_reachable"] for item in shard["probes"]):
+                shard["error_code"] = shard["probes"][-1]["error_code"]
+                shard["error"] = "Atlas shard did not complete a verified TLS handshake"
+            result["shards"].append(shard)
+            if result["probe_budget_exhausted"]:
+                break
+
+        result["reachable"] = any(probe["tls_reachable"] for shard in result["shards"] for probe in shard["probes"])
+        if not result["reachable"]:
+            result["error_code"] = "ATLAS_PROBE_TIMEOUT" if result["probe_budget_exhausted"] else "ATLAS_TLS_UNREACHABLE"
+            result["error"] = "No permitted Atlas shard completed a verified TLS handshake"
+        return result
 
     def ping_host(self, hostname: str, count: int = 2) -> dict[str, Any]:
         self.require(hostname, self.config.hosts, "Host")
@@ -327,8 +460,16 @@ class DiagnosticTools:
         return {"routes": defaults, "available": bool(defaults)}
 
     def memory_usage(self) -> dict[str, Any]:
-        ram, swap = psutil.virtual_memory(), psutil.swap_memory()
-        return {"total_bytes": ram.total, "available_bytes": ram.available, "used_bytes": ram.total - ram.available, "used_percent": ram.percent, "severity": utilization_severity(ram.percent), "swap": {"total_bytes": swap.total, "used_bytes": swap.used, "used_percent": swap.percent}}
+        ram = psutil.virtual_memory()
+        try:
+            swap = psutil.swap_memory()
+            swap_result = {"available": True, "total_bytes": swap.total, "used_bytes": swap.used, "used_percent": swap.percent}
+        except OSError:
+            # Some constrained hosts expose RAM counters but cannot read swap
+            # accounting.  Preserve the useful RAM diagnostic instead of
+            # turning the entire read-only tool into a gateway failure.
+            swap_result = {"available": False, "total_bytes": None, "used_bytes": None, "used_percent": None}
+        return {"total_bytes": ram.total, "available_bytes": ram.available, "used_bytes": ram.total - ram.available, "used_percent": ram.percent, "severity": utilization_severity(ram.percent), "swap": swap_result}
 
     def cpu_usage(self) -> dict[str, Any]:
         per_cpu = [round(value, 1) for value in psutil.cpu_percent(interval=0.1, percpu=True)]
@@ -396,12 +537,22 @@ class DiagnosticTools:
         return {"available": bool(readings), "readings": readings[:100], "truncated": len(readings) > 100}
 
     def system_uptime(self) -> dict[str, Any]:
-        boot = psutil.boot_time()
+        try:
+            boot = psutil.boot_time()
+        except OSError:
+            # Sandboxed macOS and some restricted service accounts deny the
+            # sysctl query psutil uses.  Return a structured partial result
+            # instead of failing a harmless host diagnostic.
+            boot = None
         try:
             uptime = float(Path("/proc/uptime").read_text().split()[0])
         except (OSError, ValueError):
-            uptime = max(0, time.time() - boot)
-        return {"uptime_seconds": round(uptime, 1), "boot_timestamp": boot, "load_average": list(psutil.getloadavg()), "cpu_count": psutil.cpu_count(), "cpu_count_physical": psutil.cpu_count(logical=False)}
+            uptime = max(0, time.time() - boot) if boot is not None else 0.1
+        try:
+            load_average = list(psutil.getloadavg())
+        except OSError:
+            load_average = []
+        return {"uptime_seconds": round(uptime, 1), "boot_timestamp": boot, "load_average": load_average, "cpu_count": psutil.cpu_count(), "cpu_count_physical": psutil.cpu_count(logical=False)}
 
     def process_list(self, limit: int = 20, sort_by: str = "memory") -> dict[str, Any]:
         if sort_by not in ("memory", "cpu"):

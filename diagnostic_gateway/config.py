@@ -30,6 +30,36 @@ class TCPAddress(BaseModel):
     port: int = Field(ge=1, le=65535)
 
 
+class AtlasSeed(BaseModel):
+    """One administrator-approved Atlas SRV seed and its shard DNS boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+    seed: str = Field(min_length=1, max_length=253)
+    # Atlas SRV answers must stay under this exact DNS suffix.  It is not a
+    # wildcard and deliberately excludes arbitrary targets returned by DNS.
+    shard_hostname_suffix: str = Field(min_length=3, max_length=253)
+    # Atlas clients use this fixed MongoDB TLS port.  Do not let SRV data select
+    # an arbitrary service port on an otherwise permitted hostname.
+    port: int = Field(default=27017, ge=27017, le=27017)
+
+    @field_validator("seed", "shard_hostname_suffix")
+    @classmethod
+    def safe_dns_name(cls, value: str) -> str:
+        import re
+
+        normalized = value.lower().rstrip(".")
+        label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+        if (not normalized or len(normalized) > 253 or not re.fullmatch(rf"{label}(?:\.{label})+", normalized)):
+            raise ValueError("Atlas seed and shard suffix must be DNS hostnames")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_seed_boundary(self) -> "AtlasSeed":
+        if self.seed == self.shard_hostname_suffix or not self.seed.endswith("." + self.shard_hostname_suffix):
+            raise ValueError("Atlas seed must be below its configured shard hostname suffix")
+        return self
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     containers: list[str] = Field(default_factory=list)
@@ -38,6 +68,9 @@ class GatewayConfig(BaseModel):
     http_urls: list[str] = Field(default_factory=lambda: ["https://codeduel.online", "http://127.0.0.1:8085"])
     container_http: dict[str, ContainerHTTP] = Field(default_factory=dict)
     tcp_targets: list[TCPAddress] = Field(default_factory=list)
+    # This is intentionally separate from generic host/TCP allowlists: an Atlas
+    # diagnostic begins only from one named SRV seed and cannot accept a URI.
+    atlas_seeds: list[AtlasSeed] = Field(default_factory=list)
     disk_paths: list[str] = Field(default_factory=lambda: ["/"])
     write_containers: list[str] = Field(default_factory=list)
     write_services: list[str] = Field(default_factory=list)
@@ -60,6 +93,8 @@ class GatewayConfig(BaseModel):
         for host in self.hosts + [target.host for target in self.tcp_targets]:
             if not host or len(host) > 253 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:" for c in host):
                 raise ValueError("Unsafe configured host")
+        if len({seed.seed for seed in self.atlas_seeds}) != len(self.atlas_seeds):
+            raise ValueError("Atlas seed allowlist entries must be unique")
         if not set(self.write_containers).issubset(self.containers) or not set(self.write_services).issubset(self.services):
             raise ValueError("Write targets must be included in the diagnostic allowlist")
         valid = {"start_container", "restart_container", "stop_container", "start_service", "restart_service", "stop_service"}

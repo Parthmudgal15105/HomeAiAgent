@@ -140,12 +140,12 @@ def create_app(settings: Settings | None = None, sessions=None, gateway=None, ll
             incident = session.get(Incident, incident_id)
             if not incident:
                 raise HTTPException(404, 'Incident not found')
-            if incident.status not in ('OPEN', 'FAILED') or incident_id in tasks:
+            if incident.status not in ('OPEN', 'FAILED', 'ESCALATED') or incident_id in tasks:
                 raise HTTPException(409, 'Incident cannot start an investigation in its current state')
             active = sum(not t.done() for t in tasks.values())
             if active >= settings.agent_max_parallel_incidents:
                 raise HTTPException(409, 'The reasoning provider is already investigating another incident; retry after it finishes')
-            claimed = session.execute(update(Incident).where(Incident.id == incident_id, Incident.status.in_(['OPEN', 'FAILED'])).values(status='INVESTIGATING', updated_at=now()))
+            claimed = session.execute(update(Incident).where(Incident.id == incident_id, Incident.status.in_(['OPEN', 'FAILED', 'ESCALATED'])).values(status='INVESTIGATING', updated_at=now()))
             if claimed.rowcount != 1:
                 raise HTTPException(409, 'Incident was already claimed')
             session.commit()
