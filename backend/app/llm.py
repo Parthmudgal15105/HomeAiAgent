@@ -98,6 +98,52 @@ def parse_decision(content: str) -> Decision:
     return Decision.model_validate(decoded)
 
 
+def ollama_action_schema(context: dict) -> dict:
+    """Use the smallest possible local-model contract for one bounded action.
+
+    The agent still validates arguments against the live registry before calling a
+    tool.  Keeping that large, dynamic schema out of Qwen's constrained decoder
+    avoids asking a small local model to emit an entire incident report at every
+    diagnostic step.
+    """
+    actions = [tool['name'] for tool in context.get('tools', []) if tool.get('risk_level') == 'READ_ONLY']
+    return {
+        'type': 'object',
+        'properties': {
+            'action': {'type': 'string', 'enum': [*actions, 'STOP', 'ESCALATE']},
+            'reason': {'type': 'string', 'minLength': 3, 'maxLength': 180},
+            'args': {'type': 'object'},
+        },
+        'required': ['action', 'reason', 'args'],
+        'additionalProperties': False,
+    }
+
+
+def parse_ollama_action(content: str, context: dict) -> Decision:
+    """Convert the minimal local contract to the internal, policy-checked type."""
+    if not isinstance(content, str) or len(content) > 64000:
+        raise ValueError('Model response exceeds limit or is not text')
+    value = content.strip()
+    if value.startswith('```') and value.endswith('```'):
+        value = '\n'.join(value.splitlines()[1:-1]).strip()
+    parsed = json.loads(value)
+    if set(parsed) != {'action', 'reason', 'args'} or not isinstance(parsed['reason'], str) or not isinstance(parsed['args'], dict):
+        raise ValueError('Model did not return the minimal action schema')
+    action, reason, args = parsed['action'], parsed['reason'], parsed['args']
+    allowed = {tool['name'] for tool in context.get('tools', []) if tool.get('risk_level') == 'READ_ONLY'}
+    if action in allowed:
+        return Decision(decision_type='TOOL_CALL', tool=action, arguments=args, reason=reason)
+    if action == 'ESCALATE':
+        return Decision(decision_type='NEED_USER_INPUT', reason=reason, summary=reason, capability_status='KNOWN_TOOL')
+    if action == 'STOP':
+        evidence = [item['id'] for item in context.get('observations', [])]
+        if evidence:
+            return Decision(decision_type='DIAGNOSIS', reason=reason, root_cause=reason, summary=reason,
+                            evidence_observation_ids=[evidence[-1]])
+        return Decision(decision_type='STOP', reason=reason, summary=reason)
+    raise ValueError('Model selected an action outside the current allowlist')
+
+
 def model_prompt_context(context: dict) -> dict:
     """Remove prompt duplicates while retaining model-relevant incident topology.
 
@@ -284,7 +330,7 @@ class OllamaLLMProvider(LLMProvider):
         content = json.dumps(redact(prompt_context), separators=(',', ':'), ensure_ascii=False)
         if len(content) > self.settings.agent_context_chars:
             raise ValueError('Structured model context exceeds configured character budget')
-        schema = decision_schema(context)
+        schema = ollama_action_schema(context)
         validate_ollama_prompt_budget(self.settings, content, schema)
         messages = [{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': content}]
         async with httpx.AsyncClient(timeout=self.settings.agent_llm_timeout_seconds, trust_env=False) as client:
@@ -327,7 +373,7 @@ class OllamaLLMProvider(LLMProvider):
                 finally:
                     self.record_timing(final, round((time.monotonic() - started) * 1000, 1), first_token)
                 try:
-                    return parse_decision(raw)
+                    return parse_ollama_action(raw, context)
                 except (ValueError, ValidationError) as exc:
                     self.metrics['invalid_json'] += 1
                     if attempt:
