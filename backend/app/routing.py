@@ -21,7 +21,9 @@ def constrained_arguments(tool: dict, target: str = '') -> dict | None:
     for key in schema.get('required', []):
         prop = properties.get(key, {})
         allowed = prop.get('enum', [])
-        if key in ('container', 'service', 'hostname', 'host', 'process') and target in allowed:
+        if key in ('container', 'service', 'hostname', 'host', 'process') and target:
+            if target not in allowed:
+                return None
             values[key] = target
         elif 'const' in prop:
             values[key] = prop['const']

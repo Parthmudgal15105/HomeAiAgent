@@ -11,6 +11,7 @@ def registry():
         'http_check': tool('http_check', {'url': {'enum': ['https://codeduel.online']}}, ('url',)),
         'disk_usage': tool('disk_usage', {}),
         'docker_inspect': tool('docker_inspect', {'container': {'enum': ['codeduel-api']}}, ('container',)),
+        'docker_list': tool('docker_list', {}),
         'ping_host': tool('ping_host', {'hostname': {'enum': ['codeduel.online']}}, ('hostname',)),
     }
 
@@ -29,6 +30,10 @@ def test_disk_routes_to_disk_usage():
 
 def test_container_routes_to_schema_allowed_inspect():
     assert route('container', 'codeduel-api') == ('docker_inspect', {'container': 'codeduel-api'})
+
+
+def test_container_with_unconfigured_target_uses_target_free_status():
+    assert route('container', 'redis') == ('docker_list', {})
 
 
 def test_network_routes_to_schema_allowed_network_probe():
