@@ -10,10 +10,13 @@ Group=aiops-gateway
 SupplementaryGroups=docker systemd-journal
 WorkingDirectory=/opt/aiops-gateway
 EnvironmentFile=/etc/aiops-gateway.env
+# Defaults to host-only. A root-owned drop-in may set this to the host's
+# Tailscale address for a private remote controller; never bind 0.0.0.0.
+Environment=GATEWAY_BIND_HOST=127.0.0.1
 Environment=GATEWAY_CONFIG_PATH=/opt/aiops-gateway/config/gateway.json
 Environment=GATEWAY_STATE_PATH=/var/lib/aiops-gateway/approvals.sqlite3
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/aiops-gateway/venv/bin/uvicorn diagnostic_gateway.main:app --host 127.0.0.1 --port 18081 --workers 1 --limit-concurrency 12 --timeout-keep-alive 5
+ExecStart=/opt/aiops-gateway/venv/bin/uvicorn diagnostic_gateway.main:app --host ${GATEWAY_BIND_HOST} --port 18081 --workers 1 --limit-concurrency 12 --timeout-keep-alive 5
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
