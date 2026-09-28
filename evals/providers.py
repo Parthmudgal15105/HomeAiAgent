@@ -54,3 +54,6 @@ class RecordingProvider:
             "risk_level": self.registry.get(decision.tool, {}).get("risk_level", "UNKNOWN"),
         })
         return decision
+
+    async def classify_incident(self, incident: dict[str, Any]):
+        return await self.provider.classify_incident(incident)

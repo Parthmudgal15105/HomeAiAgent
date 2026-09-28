@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from .config import Settings
 from .safety import redact
-from .schemas import Decision
+from .schemas import Decision, IncidentSpec
 
 
 SYSTEM_PROMPT = '''ROLE: Infrastructure incident orchestrator.
@@ -41,6 +41,12 @@ OUTPUT:
 {"action":"tool|STOP|ESCALATE","reason":"short reason","args":{}}
 
 The supplied JSON schema is authoritative: encode the selected action in that schema, use only its allowed tool names and arguments, and return one JSON object with no prose.'''
+
+CLASSIFICATION_PROMPT = '''Classify this infrastructure incident. Return JSON only.
+category: http_service|container|process|systemd_service|network|disk|database|unknown.
+target: named affected host, container, process, service, or empty.
+symptom: short restatement. confidence: 0 to 1.
+Do not select tools or propose actions.'''
 
 
 def remaining_parameters(tool: dict, observations: list[dict]) -> dict | None:
@@ -97,6 +103,15 @@ def parse_decision(content: str) -> Decision:
     if any(mark in suffix for mark in ('{', '}', '[', ']')):
         raise ValueError('Ambiguous or multiple model decision objects')
     return Decision.model_validate(decoded)
+
+
+def parse_incident_spec(content: str) -> IncidentSpec:
+    if not isinstance(content, str) or len(content) > 4000:
+        raise ValueError('Incident classification response is invalid')
+    value = content.strip()
+    if value.startswith('```') and value.endswith('```'):
+        value = '\n'.join(value.splitlines()[1:-1]).strip()
+    return IncidentSpec.model_validate(json.loads(value))
 
 
 def ollama_action_schema(context: dict) -> dict:
@@ -307,6 +322,11 @@ class LLMProvider(ABC):
     async def generate_report(self, context: dict) -> Decision:
         return await self.decide_next_action({**context, 'report_requested': True})
 
+    async def classify_incident(self, incident: dict) -> IncidentSpec:
+        # Providers without the compact local classifier retain the bounded
+        # reasoning path rather than guessing a route.
+        return IncidentSpec(category='unknown', target='', symptom=incident.get('description', ''), confidence=0)
+
 
 class OllamaLLMProvider(LLMProvider):
     def __init__(self, settings: Settings):
@@ -336,6 +356,53 @@ class OllamaLLMProvider(LLMProvider):
         self.metrics['latencies_ms'].append(total_ms)
         self.metrics['load_ms'].append(load_ms)
         self.metrics['prompt_eval_ms'].append(prompt_eval_ms)
+
+    async def classify_incident(self, incident: dict) -> IncidentSpec:
+        content = json.dumps(redact({key: incident.get(key, '') for key in ('title', 'description', 'service')}), separators=(',', ':'), ensure_ascii=False)
+        schema = IncidentSpec.model_json_schema()
+        validate_ollama_prompt_budget(self.settings, content, schema)
+        messages = [{'role': 'system', 'content': CLASSIFICATION_PROMPT}, {'role': 'user', 'content': content}]
+        async with httpx.AsyncClient(timeout=self.settings.agent_llm_timeout_seconds, trust_env=False) as client:
+            for attempt in range(2):
+                started, raw, first_token, final = time.monotonic(), '', None, {}
+                self.metrics['requests'] += 1
+                try:
+                    async with client.stream('POST', self.settings.ollama_base_url.rstrip('/') + '/api/chat', json={
+                        'model': self.settings.ollama_model, 'messages': messages, 'stream': True,
+                        'format': schema, 'think': False, 'keep_alive': self.settings.ollama_keep_alive,
+                        'options': {'temperature': 0, 'seed': 42, 'num_ctx': self.settings.ollama_num_ctx,
+                                    'num_predict': min(96, self.settings.ollama_num_predict), 'num_thread': self.settings.ollama_num_thread},
+                    }) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            chunk = json.loads(line)
+                            if chunk.get('error'):
+                                raise RuntimeError('Local model service error: ' + str(redact(chunk['error'], 500)))
+                            piece = chunk.get('message', {}).get('content', '')
+                            if piece and first_token is None:
+                                first_token = round((time.monotonic() - started) * 1000, 1)
+                            raw += piece
+                            if chunk.get('done'):
+                                final = chunk
+                    if not final:
+                        raise ValueError('Local model response stream ended before completion')
+                except Exception:
+                    self.metrics['failed_decisions'] += 1
+                    raise
+                finally:
+                    self.record_timing(final, round((time.monotonic() - started) * 1000, 1), first_token)
+                try:
+                    return parse_incident_spec(raw)
+                except (ValueError, ValidationError) as exc:
+                    self.metrics['invalid_json'] += 1
+                    if attempt:
+                        self.metrics['failed_decisions'] += 1
+                        raise ValueError('Local model returned invalid incident classification twice') from exc
+                    self.metrics['retries'] += 1
+                    messages.extend([{'role': 'assistant', 'content': str(redact(raw, 1000))}, {'role': 'user', 'content': 'Return only valid classification JSON.'}])
+        raise RuntimeError('No incident classification returned')
 
     async def decide_next_action(self, context: dict) -> Decision:
         # Context is bounded structurally by the orchestrator, never by slicing JSON.

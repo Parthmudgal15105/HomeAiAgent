@@ -12,8 +12,9 @@ from .failures import FailureKind, model_failure_kind, tool_failure_kind
 from .gateway import validate_tool, WRITE_TOOLS
 from .models import Action, AuditEvent, Hypothesis, Incident, Observation, now
 from .observations import summarize_observation
+from .routing import initial_diagnostic
 from .safety import disk_severity, redact, evidence_confidence
-from .schemas import Decision
+from .schemas import Decision, IncidentSpec
 
 logger = logging.getLogger('homeai.agent')
 
@@ -306,6 +307,38 @@ class Agent:
         feedback = ''
         invalid_count = 0
         max_decisions = min(self.settings.agent_max_steps, self.settings.agent_max_model_calls)
+        with self.sessions() as session:
+            incident = session.get(Incident, incident_id)
+            incident_input = {'title': incident.title, 'description': incident.description, 'service': incident.service}
+        try:
+            spec = await asyncio.wait_for(self.llm.classify_incident(incident_input), timeout=self.settings.agent_llm_timeout_seconds)
+        except AttributeError:
+            spec = IncidentSpec(category='unknown', target='', symptom=incident_input['description'], confidence=0)
+        except Exception as exc:
+            # Classification is an optimization; a bounded existing investigation
+            # remains safer than treating a failed parse as a guessed category.
+            self.audit(incident_id, 'incident_classification_unavailable', {'error': str(redact(str(exc), 300))})
+            spec = IncidentSpec(category='unknown', target='', symptom=incident_input['description'], confidence=0)
+        self.update_state(incident_id, incident_spec=spec.model_dump())
+        self.audit(incident_id, 'incident_classified', spec.model_dump())
+        route = initial_diagnostic(spec, registry)
+        if route:
+            tool, arguments = route
+            validate_tool(registry, tool, arguments)
+            calls.add(signature(tool, arguments))
+            self.update_state(incident_id, phase='DIAGNOSTIC', next_action={'tool': tool, 'arguments': arguments, 'reason': 'Deterministic category route'})
+            started = time.monotonic()
+            try:
+                result = await asyncio.wait_for(self.gateway.execute(tool, arguments), timeout=self.settings.agent_tool_timeout_seconds)
+            except Exception as exc:
+                result = {'tool': tool, 'ok': False, 'result': {}, 'error': redact(str(exc), 1000), 'failure_kind': tool_failure_kind(exc).value}
+            result['duration_ms'] = round((time.monotonic() - started) * 1000, 1)
+            result['tool_execution_time_ms'] = result['duration_ms']
+            if not result.get('ok'):
+                result.setdefault('failure_kind', tool_failure_kind(result.get('error')).value)
+            observation_id = self.record_observation(incident_id, tool, arguments, result, 'Deterministic category route')
+            self.audit(incident_id, 'deterministic_diagnostic', {'tool': tool, 'arguments': arguments, 'observation_id': observation_id, 'ok': result.get('ok')})
+            max_decisions -= 1
         rag_retrieved = not (self.rag and self.settings.rag_enabled)
         for step in range(max_decisions):
             step_started = time.monotonic()

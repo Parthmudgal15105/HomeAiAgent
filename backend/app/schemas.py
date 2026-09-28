@@ -14,6 +14,14 @@ class IncidentCreate(StrictModel):
     severity: Literal['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] = 'MEDIUM'
 
 
+class IncidentSpec(StrictModel):
+    """Small, non-authoritative language classification for deterministic routing."""
+    category: Literal['http_service', 'container', 'process', 'systemd_service', 'network', 'disk', 'database', 'unknown']
+    target: str = Field(default='', max_length=160)
+    symptom: str = Field(default='', max_length=500)
+    confidence: float = Field(ge=0, le=1)
+
+
 class OperationCreate(StrictModel):
     application: str = Field(min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_.-]+$')
     tool: Literal['start_container', 'stop_container', 'restart_container', 'start_service', 'stop_service', 'restart_service']
